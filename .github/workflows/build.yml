@@ -188,39 +188,19 @@ jobs:
             throw 'Missing dist/native/LICENSE*'
           }
 
+      - name: Create release zip
+        shell: pwsh
+        run: |
+          if (Test-Path 'hlmedia-windows.zip') {
+            Remove-Item 'hlmedia-windows.zip' -Force
+          }
+          Compress-Archive -Path 'dist/native/*' -DestinationPath 'hlmedia-windows.zip'
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: hlmedia-windows
-          path: dist/native
-
-      - name: Ensure nightly tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $headers = @{
-            Authorization = "Bearer $env:GITHUB_TOKEN"
-            Accept = 'application/vnd.github+json'
-            'X-GitHub-Api-Version' = '2022-11-28'
-          }
-          $repo = '${{ github.repository }}'
-          $refUri = "https://api.github.com/repos/$repo/git/ref/tags/nightly"
-
-          try {
-            Invoke-RestMethod -Uri $refUri -Headers $headers | Out-Null
-          } catch {
-            if ($_.Exception.Response.StatusCode.value__ -ne 404) {
-              throw
-            }
-            Invoke-RestMethod `
-              -Method Post `
-              -Uri "https://api.github.com/repos/$repo/git/refs" `
-              -Headers $headers `
-              -Body (@{ ref = 'refs/tags/nightly'; sha = '${{ github.sha }}' } | ConvertTo-Json) `
-              -ContentType 'application/json' | Out-Null
-          }
+          path: hlmedia-windows.zip
 
       - name: Update nightly release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -232,6 +212,7 @@ jobs:
           name: Nightly Release
           body: |
             Automated nightly Windows build of `hlmedia`.
-          only-when-changed: false
+
+            Download `hlmedia-windows.zip` and extract it where you want to keep the native files.
           files: |
-            dist/native/*
+            hlmedia-windows.zip
