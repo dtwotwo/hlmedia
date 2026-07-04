@@ -1,0 +1,8 @@
+-cp .
+-cp ../../
+-lib heaps
+-lib hlsdl
+-lib hlminiaudio
+-hl simple.hl
+-main Main
+-D hlmedia

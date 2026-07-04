@@ -1,0 +1,6 @@
+*.hl
+*.hdll
+*.lib
+*.dll
+*.mp4
+.haxelib

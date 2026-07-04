@@ -1,0 +1,7 @@
+.vs
+.deps
+build
+out
+dist
+native-libs
+*.zip

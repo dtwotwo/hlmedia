@@ -1,0 +1,7 @@
+{
+	"name": "hlmedia",
+	"license": "MIT",
+	"contributors": ["dtwotwo"],
+	"version": "0.1.0",
+	"classPath": "."
+}

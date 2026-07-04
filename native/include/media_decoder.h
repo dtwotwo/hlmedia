@@ -1,0 +1,52 @@
+#pragma once
+
+#include "audio_queue.h"
+#include "frame_queue.h"
+#include "media_types.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef struct AVFormatContext AVFormatContext;
+typedef struct AVCodecContext AVCodecContext;
+typedef struct AVFrame AVFrame;
+typedef struct AVPacket AVPacket;
+typedef struct SwrContext SwrContext;
+typedef struct SwsContext SwsContext;
+
+typedef struct MediaDecoder {
+	AVFormatContext* formatContext;
+	AVCodecContext* videoCodecContext;
+	AVCodecContext* audioCodecContext;
+	AVFrame* videoFrame;
+	AVFrame* audioFrame;
+	AVPacket* packet;
+	SwrContext* swrContext;
+	SwsContext* swsContext;
+	int videoStream;
+	int audioStream;
+	double audioTrimBefore;
+	bool eof;
+	bool paused;
+	HlmediaInfo info;
+	FrameQueue videoQueue;
+	AudioQueue audioQueue;
+	char* lastError;
+} MediaDecoder;
+
+MediaDecoder* media_decoder_create(void);
+void media_decoder_destroy(MediaDecoder* decoder);
+bool media_decoder_open(MediaDecoder* decoder, const char* path);
+void media_decoder_close(MediaDecoder* decoder);
+int media_decoder_decode(MediaDecoder* decoder);
+bool media_decoder_seek(MediaDecoder* decoder, double seconds);
+void media_decoder_play(MediaDecoder* decoder);
+void media_decoder_pause(MediaDecoder* decoder, bool paused);
+void media_decoder_stop(MediaDecoder* decoder);
+const HlmediaInfo* media_decoder_get_info(const MediaDecoder* decoder);
+HlmediaFrame* media_decoder_take_video_frame(MediaDecoder* decoder);
+HlmediaAudioChunk* media_decoder_take_audio_chunk(MediaDecoder* decoder, int maxFrames);
+const char* media_decoder_get_last_error(const MediaDecoder* decoder);
+
+void hlmedia_frame_free(HlmediaFrame* frame);
+void hlmedia_audio_chunk_free(HlmediaAudioChunk* chunk);
