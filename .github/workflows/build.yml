@@ -16,7 +16,7 @@ env:
 
 jobs:
   build:
-    name: Build Windows package
+    name: Build native
     runs-on: windows-2025-vs2026
 
     steps:
@@ -72,36 +72,155 @@ jobs:
       - name: Build release
         run: cmake --build out/build/release --config Release
 
-      - name: Stage package
+      - name: Stage native build
         shell: pwsh
         run: |
-          $packageDir = 'dist/hlmedia-windows'
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          New-Item -ItemType Directory -Force -Path "$packageDir/hlmedia" | Out-Null
+          New-Item -ItemType Directory -Force -Path 'dist/native' | Out-Null
 
-          Copy-Item 'out/build/release/native/Release/hlmedia.hdll' "$packageDir/hlmedia.hdll" -Force
-          Copy-Item 'out/build/release/native/Release/hlmedia.lib' "$packageDir/hlmedia.lib" -Force
+          Copy-Item 'out/build/release/native/Release/hlmedia.hdll' 'dist/native/hlmedia.hdll' -Force
+          Copy-Item 'out/build/release/native/Release/hlmedia.lib' 'dist/native/hlmedia.lib' -Force
 
           foreach ($dll in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll', 'swresample-*.dll', 'swscale-*.dll')) {
-            Copy-Item "$env:FFMPEG_ROOT/bin/$dll" $packageDir -Force
+            Copy-Item "$env:FFMPEG_ROOT/bin/$dll" 'dist/native' -Force
           }
 
-          Copy-Item 'LICENSE' "$packageDir/LICENSE" -Force
-          Copy-Item 'LICENSE_FFMPEG.md' "$packageDir/LICENSE_FFMPEG.md" -Force
+      - name: Save native build
+        uses: actions/cache/save@v5.0.5
+        with:
+          path: dist/native
+          key: ${{ runner.os }}-hlmedia-native-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Create release zip
+  test:
+    name: Test Haxe ${{ matrix.haxe-version }}
+    needs: build
+    runs-on: windows-2025-vs2026
+
+    strategy:
+      fail-fast: false
+      matrix:
+        haxe-version: ["4.3.7", "latest"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Haxe
+        uses: krdlab/setup-haxe@master
+        with:
+          haxe-version: ${{ matrix.haxe-version }}
+
+      - name: Download HashLink
         shell: pwsh
         run: |
-          if (Test-Path 'hlmedia-windows.zip') {
-            Remove-Item 'hlmedia-windows.zip' -Force
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/HaxeFoundation/hashlink/releases/latest'
+          $asset = $release.assets | Where-Object { $_.name -like 'hashlink-*-win.zip' } | Select-Object -First 1
+          if (-not $asset) {
+            throw 'Could not find a Windows HashLink release asset.'
           }
-          Compress-Archive -Path 'dist/hlmedia-windows/*' -DestinationPath 'hlmedia-windows.zip'
+
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile 'hashlink-win.zip'
+          Expand-Archive -LiteralPath 'hashlink-win.zip' -DestinationPath 'hashlink' -Force
+
+          $hashlinkDir = Get-ChildItem -Path 'hashlink' -Directory | Select-Object -First 1
+          if (-not $hashlinkDir) {
+            throw 'Could not locate the extracted HashLink directory.'
+          }
+
+          "HASHLINK=$($hashlinkDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$($hashlinkDir.FullName)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Restore native build
+        uses: actions/cache/restore@v5.0.5
+        with:
+          path: dist/native
+          key: ${{ runner.os }}-hlmedia-native-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Stage test native files
+        shell: pwsh
+        run: Copy-Item 'dist/native/*' 'tests/testMain/' -Force
+
+      - name: Compile HL tests
+        working-directory: tests/testMain
+        run: |
+          haxe --version
+          haxe test-hl.hxml
+
+      - name: Run HL tests
+        working-directory: tests/testMain
+        run: |
+          hl --version
+          hl test.hl
+
+  package:
+    name: Package release
+    needs: test
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Restore native build
+        uses: actions/cache/restore@v5.0.5
+        with:
+          path: dist/native
+          key: ${{ runner.os }}-hlmedia-native-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Stage license files
+        shell: pwsh
+        run: Copy-Item 'LICENSE*' 'dist/native/' -Force
+
+      - name: Verify packaged files
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'dist/native/hlmedia.hdll')) {
+            throw 'Missing dist/native/hlmedia.hdll'
+          }
+          if (-not (Test-Path 'dist/native/hlmedia.lib')) {
+            throw 'Missing dist/native/hlmedia.lib'
+          }
+          foreach ($dll in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll', 'swresample-*.dll', 'swscale-*.dll')) {
+            if (-not (Get-ChildItem -Path 'dist/native' -File -Filter $dll)) {
+              throw "Missing dist/native/$dll"
+            }
+          }
+          if (-not (Get-ChildItem -Path 'dist/native' -File -Filter 'LICENSE*')) {
+            throw 'Missing dist/native/LICENSE*'
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: hlmedia-windows
-          path: hlmedia-windows.zip
+          path: dist/native
+
+      - name: Ensure nightly tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $repo = '${{ github.repository }}'
+          $refUri = "https://api.github.com/repos/$repo/git/ref/tags/nightly"
+
+          try {
+            Invoke-RestMethod -Uri $refUri -Headers $headers | Out-Null
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) {
+              throw
+            }
+            Invoke-RestMethod `
+              -Method Post `
+              -Uri "https://api.github.com/repos/$repo/git/refs" `
+              -Headers $headers `
+              -Body (@{ ref = 'refs/tags/nightly'; sha = '${{ github.sha }}' } | ConvertTo-Json) `
+              -ContentType 'application/json' | Out-Null
+          }
 
       - name: Update nightly release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -113,8 +232,6 @@ jobs:
           name: Nightly Release
           body: |
             Automated nightly Windows build of `hlmedia`.
-
-            Download `hlmedia-windows.zip` and extract it into your game's native/bin folder.
-            The package uses shared LGPL FFmpeg DLLs and includes `LICENSE` and `LICENSE_FFMPEG.md`.
+          only-when-changed: false
           files: |
-            hlmedia-windows.zip
+            dist/native/*

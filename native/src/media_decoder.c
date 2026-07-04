@@ -65,7 +65,9 @@ static void media_decoder_configure_logs(void) {
 }
 
 static void media_decoder_log_callback(void* ptr, int level, const char* fmt, va_list vl) {
-	if (fmt != NULL && strstr(fmt, "Could not update timestamps for discarded samples") != NULL)
+	if (fmt != NULL
+		&& (strstr(fmt, "Could not update timestamps for discarded samples") != NULL
+			|| strstr(fmt, "Could not update timestamps for skipped samples") != NULL))
 		return;
 	av_log_default_callback(ptr, level, fmt, vl);
 }
@@ -174,10 +176,14 @@ static bool media_decoder_open_stream_codecs(MediaDecoder* decoder) {
 				avcodec_free_context(&decoder->audioCodecContext);
 				continue;
 			}
+			if (decoder->audioCodecContext->sample_rate <= 0) {
+				avcodec_free_context(&decoder->audioCodecContext);
+				continue;
+			}
 			decoder->audioStream = (int)i;
 			decoder->info.hasAudio = true;
 			decoder->info.audioCodec = hlmedia_strdup(codec->name != NULL ? codec->name : "");
-			decoder->info.sampleRate = 48000;
+			decoder->info.sampleRate = decoder->audioCodecContext->sample_rate;
 			decoder->info.channels = 2;
 		}
 	}
@@ -316,10 +322,27 @@ static bool media_decoder_queue_video_frame(MediaDecoder* decoder, AVFrame* fram
 }
 
 static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* frame) {
+	const int inputSampleRate = decoder->audioCodecContext->sample_rate;
+	const int outputSampleRate = decoder->info.sampleRate;
+	if (inputSampleRate <= 0 || outputSampleRate <= 0) {
+		media_decoder_set_error(decoder, "Invalid audio sample rate");
+		return false;
+	}
+
 	AVChannelLayout outputLayout;
 	av_channel_layout_default(&outputLayout, 2);
 	if (decoder->swrContext == NULL) {
-		if (swr_alloc_set_opts2(&decoder->swrContext, &outputLayout, AV_SAMPLE_FMT_FLT, 48000, &decoder->audioCodecContext->ch_layout, decoder->audioCodecContext->sample_fmt, decoder->audioCodecContext->sample_rate, 0, NULL) < 0 || swr_init(decoder->swrContext) < 0) {
+		const int result = swr_alloc_set_opts2(
+			&decoder->swrContext,
+			&outputLayout,
+			AV_SAMPLE_FMT_FLT,
+			outputSampleRate,
+			&decoder->audioCodecContext->ch_layout,
+			decoder->audioCodecContext->sample_fmt,
+			inputSampleRate,
+			0,
+			NULL);
+		if (result < 0 || swr_init(decoder->swrContext) < 0) {
 			media_decoder_set_error(decoder, "Failed to initialize audio resampler");
 			if (decoder->swrContext != NULL)
 				swr_free(&decoder->swrContext);
@@ -329,11 +352,7 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 	}
 	av_channel_layout_uninit(&outputLayout);
 
-	if (decoder->audioCodecContext->sample_rate <= 0) {
-		media_decoder_set_error(decoder, "Invalid audio sample rate");
-		return false;
-	}
-	const int64_t maxOut64 = av_rescale_rnd(swr_get_delay(decoder->swrContext, decoder->audioCodecContext->sample_rate) + frame->nb_samples, 48000, decoder->audioCodecContext->sample_rate, AV_ROUND_UP);
+	const int64_t maxOut64 = av_rescale_rnd(swr_get_delay(decoder->swrContext, inputSampleRate) + frame->nb_samples, outputSampleRate, inputSampleRate, AV_ROUND_UP);
 	if (maxOut64 <= 0 || maxOut64 > INT_MAX || (uint64_t)maxOut64 > SIZE_MAX / (2 * sizeof(float))) {
 		media_decoder_set_error(decoder, "Invalid audio frame size");
 		return false;
@@ -362,7 +381,7 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 	int queuedFrames = frames;
 	if (pts < decoder->audioTrimBefore) {
 		const double trimSeconds = decoder->audioTrimBefore - pts;
-		const int trimFrames = (int)ceil(trimSeconds * 48000.0);
+		const int trimFrames = (int)ceil(trimSeconds * outputSampleRate);
 		if (trimFrames >= queuedFrames) {
 			free(samples);
 			return true;
@@ -370,7 +389,7 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 		const size_t trimBytes = (size_t)trimFrames * 2 * sizeof(float);
 		const size_t remainingBytes = (size_t)(queuedFrames - trimFrames) * 2 * sizeof(float);
 		memmove(samples, (uint8_t*)samples + trimBytes, remainingBytes);
-		pts += (double)trimFrames / 48000.0;
+		pts += (double)trimFrames / outputSampleRate;
 		queuedFrames -= trimFrames;
 	}
 	decoder->audioTrimBefore = 0.0;
@@ -379,7 +398,7 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 	chunk.pts = pts;
 	chunk.frames = queuedFrames;
 	chunk.channels = 2;
-	chunk.sampleRate = 48000;
+	chunk.sampleRate = outputSampleRate;
 	chunk.byteSize = (size_t)queuedFrames * 2 * sizeof(float);
 	chunk.bytes = (uint8_t*)malloc(chunk.byteSize);
 	if (chunk.bytes == NULL) {

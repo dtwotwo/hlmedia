@@ -51,7 +51,7 @@ if(MSVC)
 	target_compile_options(extension PRIVATE /wd4244 /wd4267 /wd4996)
 endif()
 
-set(HLMEDIA_HDLL_DIR "${CMAKE_SOURCE_DIR}/native-libs/hdll")
+set(HLMEDIA_HDLL_DIR "${CMAKE_SOURCE_DIR}/native-libs")
 
 add_custom_command(TARGET extension POST_BUILD
 	COMMAND "${CMAKE_COMMAND}" -E make_directory "${HLMEDIA_HDLL_DIR}"

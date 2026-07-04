@@ -242,7 +242,14 @@ class VideoPlayer {
 			if (NativeMedia.decode(handle) <= 0)
 				break;
 
-		time = info.hasAudio ? playbackBaseTime + audioSink.getPlayedFrames() / info.sampleRate : clock.getTime();
+		final clockTime = clock.getTime();
+		if (info.hasAudio) {
+			time = playbackBaseTime + audioSink.getPlayedFrames() / info.sampleRate;
+			if (duration > 0 && clockTime >= duration && audioSink.getBufferedFrames() == 0)
+				time = duration;
+		} else {
+			time = clockTime;
+		}
 		dispatchTimeCallbacks(time);
 		presentFrame(time);
 

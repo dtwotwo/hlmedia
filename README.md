@@ -167,7 +167,7 @@ Release packages should also include:
 - `LICENSE`
 - `LICENSE_FFMPEG.md`
 
-The GitHub workflow packages both license files into `hlmedia-windows.zip`.
+The GitHub workflow publishes these files in the `hlmedia-windows` artifact.
 
 ## CMake options
 
