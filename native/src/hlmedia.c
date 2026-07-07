@@ -33,6 +33,19 @@ HL_PRIM MediaDecoder* HL_NAME(open)(vbyte* path) {
 	return decoder;
 }
 
+HL_PRIM MediaDecoder* HL_NAME(open_bytes)(vbyte* path, vbyte* bytes, int size) {
+	MediaDecoder* decoder = media_decoder_create();
+	if (decoder == NULL)
+		return NULL;
+	if (size < 0 || !media_decoder_open_bytes(decoder, (const char*)path, (const uint8_t*)bytes, (size_t)size)) {
+		free(globalLastError);
+		globalLastError = copy_c_string(media_decoder_get_last_error(decoder));
+		media_decoder_destroy(decoder);
+		return NULL;
+	}
+	return decoder;
+}
+
 HL_PRIM void HL_NAME(close)(MediaDecoder* decoder) {
 	media_decoder_destroy(decoder);
 }
@@ -182,6 +195,7 @@ HL_PRIM vbyte* HL_NAME(audio_chunk_bytes)(HlmediaAudioChunk* chunk) {
 }
 
 DEFINE_PRIM(_DECODER, open, _BYTES);
+DEFINE_PRIM(_DECODER, open_bytes, _BYTES _BYTES _I32);
 DEFINE_PRIM(_VOID, close, _DECODER);
 DEFINE_PRIM(_I32, decode, _DECODER);
 DEFINE_PRIM(_VOID, play, _DECODER);

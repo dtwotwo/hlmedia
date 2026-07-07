@@ -20,11 +20,14 @@
 static void media_decoder_configure_logs(void);
 static void media_decoder_log_callback(void* ptr, int level, const char* fmt, va_list vl);
 static bool media_decoder_open_stream_codecs(MediaDecoder* decoder);
+static bool media_decoder_open_format(MediaDecoder* decoder);
 static bool media_decoder_decode_packet(MediaDecoder* decoder, AVPacket* packet);
 static bool media_decoder_receive_video_frames(MediaDecoder* decoder);
 static bool media_decoder_receive_audio_frames(MediaDecoder* decoder);
 static bool media_decoder_queue_video_frame(MediaDecoder* decoder, AVFrame* frame);
 static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* frame);
+static int media_decoder_read_packet(void* opaque, uint8_t* buffer, int bufferSize);
+static int64_t media_decoder_seek_input(void* opaque, int64_t offset, int whence);
 static double media_decoder_packet_time(const MediaDecoder* decoder, int streamIndex, int64_t pts);
 static void media_decoder_set_error(MediaDecoder* decoder, const char* message);
 static void media_decoder_set_open_error(MediaDecoder* decoder, const char* path, int errorCode);
@@ -93,6 +96,56 @@ bool media_decoder_open(MediaDecoder* decoder, const char* path) {
 		media_decoder_set_open_error(decoder, decoder->info.path, openResult);
 		return false;
 	}
+	return media_decoder_open_format(decoder);
+}
+
+bool media_decoder_open_bytes(MediaDecoder* decoder, const char* path, const uint8_t* bytes, size_t size) {
+	media_decoder_close(decoder);
+	const char* inputPath = path != NULL ? path : "";
+	decoder->info.path = hlmedia_strdup(inputPath);
+	if (bytes == NULL || size == 0) {
+		media_decoder_set_error(decoder, "Empty media resource");
+		return false;
+	}
+
+	decoder->inputBytes = (uint8_t*)malloc(size);
+	if (decoder->inputBytes == NULL) {
+		media_decoder_set_error(decoder, "Failed to allocate media resource");
+		return false;
+	}
+	memcpy(decoder->inputBytes, bytes, size);
+	decoder->inputSize = size;
+	decoder->inputPosition = 0;
+
+	const int avioBufferSize = 32768;
+	uint8_t* avioBuffer = (uint8_t*)av_malloc(avioBufferSize);
+	if (avioBuffer == NULL) {
+		media_decoder_set_error(decoder, "Failed to allocate media input buffer");
+		return false;
+	}
+	decoder->avioContext = avio_alloc_context(avioBuffer, avioBufferSize, 0, decoder, media_decoder_read_packet, NULL, media_decoder_seek_input);
+	if (decoder->avioContext == NULL) {
+		av_free(avioBuffer);
+		media_decoder_set_error(decoder, "Failed to create media input");
+		return false;
+	}
+	decoder->formatContext = avformat_alloc_context();
+	if (decoder->formatContext == NULL) {
+		media_decoder_set_error(decoder, "Failed to allocate media format context");
+		return false;
+	}
+	decoder->formatContext->pb = decoder->avioContext;
+	decoder->formatContext->flags |= AVFMT_FLAG_CUSTOM_IO;
+
+	const int openResult = avformat_open_input(&decoder->formatContext, inputPath, NULL, NULL);
+	if (openResult < 0) {
+		media_decoder_set_open_error(decoder, decoder->info.path, openResult);
+		return false;
+	}
+	return media_decoder_open_format(decoder);
+}
+
+static bool media_decoder_open_format(MediaDecoder* decoder) {
 	if (avformat_find_stream_info(decoder->formatContext, NULL) < 0) {
 		media_decoder_set_error(decoder, "Failed to read stream info");
 		return false;
@@ -121,6 +174,14 @@ void media_decoder_close(MediaDecoder* decoder) {
 		avcodec_free_context(&decoder->audioCodecContext);
 	if (decoder->formatContext != NULL)
 		avformat_close_input(&decoder->formatContext);
+	if (decoder->avioContext != NULL) {
+		av_freep(&decoder->avioContext->buffer);
+		avio_context_free(&decoder->avioContext);
+	}
+	free(decoder->inputBytes);
+	decoder->inputBytes = NULL;
+	decoder->inputSize = 0;
+	decoder->inputPosition = 0;
 	decoder->videoStream = -1;
 	decoder->audioStream = -1;
 	decoder->audioTrimBefore = 0.0;
@@ -415,6 +476,40 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 		return false;
 	}
 	return true;
+}
+
+static int media_decoder_read_packet(void* opaque, uint8_t* buffer, int bufferSize) {
+	MediaDecoder* decoder = (MediaDecoder*)opaque;
+	if (decoder == NULL || buffer == NULL || bufferSize <= 0)
+		return AVERROR_EOF;
+	if (decoder->inputPosition >= decoder->inputSize)
+		return AVERROR_EOF;
+	size_t remaining = decoder->inputSize - decoder->inputPosition;
+	size_t readSize = remaining < (size_t)bufferSize ? remaining : (size_t)bufferSize;
+	memcpy(buffer, decoder->inputBytes + decoder->inputPosition, readSize);
+	decoder->inputPosition += readSize;
+	return (int)readSize;
+}
+
+static int64_t media_decoder_seek_input(void* opaque, int64_t offset, int whence) {
+	MediaDecoder* decoder = (MediaDecoder*)opaque;
+	if (decoder == NULL)
+		return AVERROR(EINVAL);
+	if (whence == AVSEEK_SIZE)
+		return (int64_t)decoder->inputSize;
+
+	int64_t target = offset;
+	if (whence == SEEK_CUR)
+		target = (int64_t)decoder->inputPosition + offset;
+	else if (whence == SEEK_END)
+		target = (int64_t)decoder->inputSize + offset;
+	else if (whence != SEEK_SET)
+		return AVERROR(EINVAL);
+
+	if (target < 0 || (uint64_t)target > decoder->inputSize)
+		return AVERROR(EINVAL);
+	decoder->inputPosition = (size_t)target;
+	return target;
 }
 
 bool media_decoder_seek(MediaDecoder* decoder, double seconds) {

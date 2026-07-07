@@ -11,11 +11,13 @@ typedef struct AVFormatContext AVFormatContext;
 typedef struct AVCodecContext AVCodecContext;
 typedef struct AVFrame AVFrame;
 typedef struct AVPacket AVPacket;
+typedef struct AVIOContext AVIOContext;
 typedef struct SwrContext SwrContext;
 typedef struct SwsContext SwsContext;
 
 typedef struct MediaDecoder {
 	AVFormatContext* formatContext;
+	AVIOContext* avioContext;
 	AVCodecContext* videoCodecContext;
 	AVCodecContext* audioCodecContext;
 	AVFrame* videoFrame;
@@ -25,6 +27,9 @@ typedef struct MediaDecoder {
 	SwsContext* swsContext;
 	int videoStream;
 	int audioStream;
+	uint8_t* inputBytes;
+	size_t inputSize;
+	size_t inputPosition;
 	double audioTrimBefore;
 	bool eof;
 	bool paused;
@@ -37,6 +42,7 @@ typedef struct MediaDecoder {
 MediaDecoder* media_decoder_create(void);
 void media_decoder_destroy(MediaDecoder* decoder);
 bool media_decoder_open(MediaDecoder* decoder, const char* path);
+bool media_decoder_open_bytes(MediaDecoder* decoder, const char* path, const uint8_t* bytes, size_t size);
 void media_decoder_close(MediaDecoder* decoder);
 int media_decoder_decode(MediaDecoder* decoder);
 bool media_decoder_seek(MediaDecoder* decoder, double seconds);

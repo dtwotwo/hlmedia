@@ -96,9 +96,11 @@ class VideoPlayer {
 		Opens a filesystem path or Heaps resource.
 	**/
 	public function open(source:EitherType<String, Resource>):Void {
-		final path:String = source is String ? cast source : resolveResourcePath(cast source);
+		final resource:Resource = source is String ? null : cast source;
+		final path:String = resource == null ? cast source : resolveResourcePath(resource);
 		close();
-		handle = NativeMedia.open(path);
+		handle = resource == null
+			|| isLocalResource(resource) ? NativeMedia.open(path) : NativeMedia.openBytes(path, resource.entry.getBytes());
 		if (handle == null)
 			throw DecodeFailed(NativeMedia.lastError());
 
@@ -408,7 +410,20 @@ class VideoPlayer {
 		return loader == null ? path : resolveFileSystemPath(loader.fs, path);
 	}
 
+	static function isLocalResource(resource:Resource):Bool {
+		final any = Std.downcast(resource, Any);
+		final loader = any == null ? null : any.loader;
+		return loader != null && resolveLocalFileSystem(loader.fs, resource.entry.path) != null;
+	}
+
 	static function resolveFileSystemPath(fileSystem:FileSystem, path:String):String {
+		final localPath = resolveLocalFileSystem(fileSystem, path);
+		if (localPath != null)
+			return localPath;
+		return path;
+	}
+
+	static function resolveLocalFileSystem(fileSystem:FileSystem, path:String):String {
 		final localFileSystem = Std.downcast(fileSystem, LocalFileSystem);
 		if (localFileSystem != null && localFileSystem.exists(path))
 			return localFileSystem.getAbsolutePath(localFileSystem.get(path));
@@ -417,10 +432,10 @@ class VideoPlayer {
 		if (multiFileSystem != null) {
 			for (child in multiFileSystem.fs)
 				if (child.exists(path))
-					return resolveFileSystemPath(child, path);
+					return resolveLocalFileSystem(child, path);
 		}
 
-		return path;
+		return null;
 	}
 }
 

@@ -1,6 +1,7 @@
 -cp .
 -cp src
 -cp ../..
+-lib heaps
 
 -m Test
 -D hl_ver=1.15.0

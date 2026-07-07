@@ -4,6 +4,7 @@ setlocal
 cd /d "%~dp0"
 if errorlevel 1 exit /b 1
 cd testMain
+set "PATH=%CD%\..\..\native-libs;%PATH%"
 
 echo [1/2] Compiling HL tests...
 haxe test-hl.hxml

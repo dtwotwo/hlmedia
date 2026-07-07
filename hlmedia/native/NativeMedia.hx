@@ -26,8 +26,20 @@ class NativeMedia {
 		return _open(@:privateAccess bytes.b);
 	}
 
+	public static inline function openBytes(path:String, bytes:Bytes):NativeHandle {
+		final pathBytes = haxe.io.Bytes.alloc(path.length + 1);
+		pathBytes.blit(0, haxe.io.Bytes.ofString(path), 0, path.length);
+		pathBytes.set(path.length, 0);
+		return _openBytes(@:privateAccess pathBytes.b, @:privateAccess bytes.b, bytes.length);
+	}
+
 	@:hlNative("hlmedia", "open")
 	static function _open(path:hl.Bytes):NativeHandle {
+		return null;
+	}
+
+	@:hlNative("hlmedia", "open_bytes")
+	static function _openBytes(path:hl.Bytes, bytes:hl.Bytes, size:Int):NativeHandle {
 		return null;
 	}
 
