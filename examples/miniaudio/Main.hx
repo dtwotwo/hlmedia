@@ -15,7 +15,7 @@ class Main extends App {
 			throw Miniaudio.describeLastError();
 
 		video = new VideoPlayer({loop: true, audioSink: new MiniAudioSink()});
-		video.open("res/video/video.mp4");
+		video.open("../res/video/video.mp4");
 		video.play();
 
 		bitmap = video.createBitmap(s2d);

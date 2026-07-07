@@ -2,6 +2,8 @@
 
 This example shows how to provide an OpenAL implementation of `hlmedia.audio.AudioSink`.
 
+It plays `../res/video/video.mp4` by default.
+
 Build:
 
 ```hxml

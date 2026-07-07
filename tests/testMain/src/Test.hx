@@ -3,6 +3,8 @@ import hxd.fmt.pak.Data;
 import hxd.fmt.pak.Writer;
 import hlmedia.MediaClock;
 import hlmedia.native.NativeMedia;
+import hlmedia.types.VideoDecodeMode;
+import hlmedia.types.VideoPixelFormat;
 
 private function main() {
 	var failed = false;
@@ -12,6 +14,28 @@ private function main() {
 		final handle = NativeMedia.open("__missing__/missing.mp4");
 		assert(handle == null, "missing file should not open");
 		assert(NativeMedia.lastError().length > 0, "missing file should populate last error");
+	}, issues);
+
+	run("video type values", () -> {
+		assert((RGBA : Int) == 0, "RGBA pixel format should be 0");
+		assert((YUV420P : Int) == 1, "YUV420P pixel format should be 1");
+		assert((NV12 : Int) == 2, "NV12 pixel format should be 2");
+		assert((P010 : Int) == 3, "P010 pixel format should be 3");
+		assert((Software : Int) == 0, "software decode mode should be 0");
+		assert((HardwareAuto : Int) == 1, "hardware auto decode mode should be 1");
+		assert((HardwareD3D11VA : Int) == 2, "D3D11VA decode mode should be 2");
+		assert((HardwareCUDA : Int) == 6, "CUDA decode mode should be 6");
+		assert((HardwareD3D12VA : Int) == 7, "D3D12VA decode mode should be 7");
+		final format:VideoPixelFormat = NV12;
+		final mode:VideoDecodeMode = HardwareAuto;
+		assert((format : Int) == 2, "VideoPixelFormat should convert to Int");
+		assert((mode : Int) == 1, "VideoDecodeMode should convert to Int");
+	}, issues);
+
+	run("invalid open with options", () -> {
+		final handle = NativeMedia.open("__missing__/missing.mp4", HardwareAuto, true, true);
+		assert(handle == null, "missing file should not open with decode options");
+		assert(NativeMedia.lastError().length > 0, "option open should populate last error");
 	}, issues);
 
 	run("pak resource bytes", () -> {

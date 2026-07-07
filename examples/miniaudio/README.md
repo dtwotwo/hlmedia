@@ -2,7 +2,9 @@
 
 This example shows how to provide a miniaudio implementation of `hlmedia.audio.AudioSink`.
 
-Add `miniaudio.hdll` to get working `hlminiaudio`.
+It plays `../res/video/video.mp4` by default.
+
+Add `miniaudio.hdll` to this folder to get working `hlminiaudio`.
 
 Then build the example:
 

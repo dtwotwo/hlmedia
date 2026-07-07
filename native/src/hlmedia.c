@@ -33,10 +33,38 @@ HL_PRIM MediaDecoder* HL_NAME(open)(vbyte* path) {
 	return decoder;
 }
 
+HL_PRIM MediaDecoder* HL_NAME(open_with_options)(vbyte* path, int decodeMode, bool allowHardwareFallback, bool preferNativePixelFormat) {
+	MediaDecoder* decoder = media_decoder_create();
+	if (decoder == NULL)
+		return NULL;
+	media_decoder_set_video_options(decoder, (HlmediaVideoDecodeMode)decodeMode, allowHardwareFallback, preferNativePixelFormat);
+	if (!media_decoder_open(decoder, (const char*)path)) {
+		free(globalLastError);
+		globalLastError = copy_c_string(media_decoder_get_last_error(decoder));
+		media_decoder_destroy(decoder);
+		return NULL;
+	}
+	return decoder;
+}
+
 HL_PRIM MediaDecoder* HL_NAME(open_bytes)(vbyte* path, vbyte* bytes, int size) {
 	MediaDecoder* decoder = media_decoder_create();
 	if (decoder == NULL)
 		return NULL;
+	if (size < 0 || !media_decoder_open_bytes(decoder, (const char*)path, (const uint8_t*)bytes, (size_t)size)) {
+		free(globalLastError);
+		globalLastError = copy_c_string(media_decoder_get_last_error(decoder));
+		media_decoder_destroy(decoder);
+		return NULL;
+	}
+	return decoder;
+}
+
+HL_PRIM MediaDecoder* HL_NAME(open_bytes_with_options)(vbyte* path, vbyte* bytes, int size, int decodeMode, bool allowHardwareFallback, bool preferNativePixelFormat) {
+	MediaDecoder* decoder = media_decoder_create();
+	if (decoder == NULL)
+		return NULL;
+	media_decoder_set_video_options(decoder, (HlmediaVideoDecodeMode)decodeMode, allowHardwareFallback, preferNativePixelFormat);
 	if (size < 0 || !media_decoder_open_bytes(decoder, (const char*)path, (const uint8_t*)bytes, (size_t)size)) {
 		free(globalLastError);
 		globalLastError = copy_c_string(media_decoder_get_last_error(decoder));
@@ -100,6 +128,14 @@ HL_PRIM bool HL_NAME(has_audio)(MediaDecoder* decoder) {
 	return decoder != NULL && media_decoder_get_info(decoder)->hasAudio;
 }
 
+HL_PRIM bool HL_NAME(hardware_decode_active)(MediaDecoder* decoder) {
+	return decoder != NULL && decoder->hwEnabled && decoder->hwAccepted;
+}
+
+HL_PRIM int HL_NAME(video_queue_size)(MediaDecoder* decoder) {
+	return decoder == NULL ? 0 : (int)frame_queue_size(&decoder->videoQueue);
+}
+
 HL_PRIM int HL_NAME(sample_rate)(MediaDecoder* decoder) {
 	return decoder == NULL ? 48000 : media_decoder_get_info(decoder)->sampleRate;
 }
@@ -120,6 +156,12 @@ HL_PRIM vbyte* HL_NAME(video_codec)(MediaDecoder* decoder) {
 
 HL_PRIM vbyte* HL_NAME(audio_codec)(MediaDecoder* decoder) {
 	return copy_string(decoder == NULL ? "" : media_decoder_get_info(decoder)->audioCodec);
+}
+
+HL_PRIM vbyte* HL_NAME(hardware_decode_backend)(MediaDecoder* decoder) {
+	if (decoder == NULL || !decoder->hwEnabled || !decoder->hwAccepted)
+		return copy_string("");
+	return copy_string(av_hwdevice_get_type_name(decoder->hwDeviceType));
 }
 
 HL_PRIM vbyte* HL_NAME(last_error)() {
@@ -152,6 +194,18 @@ HL_PRIM int HL_NAME(frame_width)(HlmediaFrame* frame) {
 
 HL_PRIM int HL_NAME(frame_height)(HlmediaFrame* frame) {
 	return frame == NULL ? 0 : frame->height;
+}
+
+HL_PRIM int HL_NAME(frame_plane_count)(HlmediaFrame* frame) {
+	return frame == NULL ? 0 : frame->planeCount;
+}
+
+HL_PRIM int HL_NAME(frame_plane_width)(HlmediaFrame* frame, int plane) {
+	return frame == NULL || plane < 0 || plane > 2 ? 0 : frame->planeWidths[plane];
+}
+
+HL_PRIM int HL_NAME(frame_plane_height)(HlmediaFrame* frame, int plane) {
+	return frame == NULL || plane < 0 || plane > 2 ? 0 : frame->planeHeights[plane];
 }
 
 HL_PRIM int HL_NAME(frame_stride)(HlmediaFrame* frame, int plane) {
@@ -195,7 +249,9 @@ HL_PRIM vbyte* HL_NAME(audio_chunk_bytes)(HlmediaAudioChunk* chunk) {
 }
 
 DEFINE_PRIM(_DECODER, open, _BYTES);
+DEFINE_PRIM(_DECODER, open_with_options, _BYTES _I32 _BOOL _BOOL);
 DEFINE_PRIM(_DECODER, open_bytes, _BYTES _BYTES _I32);
+DEFINE_PRIM(_DECODER, open_bytes_with_options, _BYTES _BYTES _I32 _I32 _BOOL _BOOL);
 DEFINE_PRIM(_VOID, close, _DECODER);
 DEFINE_PRIM(_I32, decode, _DECODER);
 DEFINE_PRIM(_VOID, play, _DECODER);
@@ -207,10 +263,13 @@ DEFINE_PRIM(_I32, width, _DECODER);
 DEFINE_PRIM(_I32, height, _DECODER);
 DEFINE_PRIM(_F64, fps, _DECODER);
 DEFINE_PRIM(_BOOL, has_audio, _DECODER);
+DEFINE_PRIM(_BOOL, hardware_decode_active, _DECODER);
+DEFINE_PRIM(_I32, video_queue_size, _DECODER);
 DEFINE_PRIM(_I32, sample_rate, _DECODER);
 DEFINE_PRIM(_I32, channels, _DECODER);
 DEFINE_PRIM(_BYTES, video_codec, _DECODER);
 DEFINE_PRIM(_BYTES, audio_codec, _DECODER);
+DEFINE_PRIM(_BYTES, hardware_decode_backend, _DECODER);
 DEFINE_PRIM(_BYTES, last_error, _NO_ARG);
 DEFINE_PRIM(_FRAME, get_video_frame, _DECODER);
 DEFINE_PRIM(_VOID, release_video_frame, _DECODER _FRAME);
@@ -218,6 +277,9 @@ DEFINE_PRIM(_F64, frame_pts, _FRAME);
 DEFINE_PRIM(_I32, frame_format, _FRAME);
 DEFINE_PRIM(_I32, frame_width, _FRAME);
 DEFINE_PRIM(_I32, frame_height, _FRAME);
+DEFINE_PRIM(_I32, frame_plane_count, _FRAME);
+DEFINE_PRIM(_I32, frame_plane_width, _FRAME _I32);
+DEFINE_PRIM(_I32, frame_plane_height, _FRAME _I32);
 DEFINE_PRIM(_I32, frame_stride, _FRAME _I32);
 DEFINE_PRIM(_I32, frame_plane_size, _FRAME _I32);
 DEFINE_PRIM(_BYTES, frame_plane, _FRAME _I32);

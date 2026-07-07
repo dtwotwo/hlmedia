@@ -9,7 +9,12 @@
 
 It plays local MP4 files with H.264 video and optional AAC audio. FFmpeg handles
 demuxing and decoding, video frames are uploaded to Heaps textures, and audio is
-sent to an `AudioSink` supplied by your application.
+sent to an `AudioSink` supplied by your application. Software-decoded `YUV420P`
+and `NV12` frames are uploaded as native planes and converted with a shader;
+unsupported formats still use the RGBA fallback path.
+
+Hardware decoding can be requested from Haxe. It is opt-in and falls back to
+software by default when the requested backend is unavailable.
 
 At the moment, MP4/H.264 is the only supported video format. Support for more
 containers and codecs is planned for future releases.
@@ -44,7 +49,7 @@ final video = new hlmedia.VideoPlayer({
 	loop: true,
 	audioSink: new OpenALSink()
 });
-video.open("res/video/intro.mp4");
+video.open("res/video/video.mp4");
 video.play();
 
 final bitmap = video.createBitmap(s2d);
@@ -72,13 +77,14 @@ video.onTime(3.5, () -> trace("3.5 seconds"));
 You can also open a Heaps resource:
 
 ```haxe
-video.open(hxd.Res.load("video/intro.mp4"));
+video.open(hxd.Res.load("video/video.mp4"));
 ```
 
 ## Examples
 
 - `examples/openal` contains an OpenAL `AudioSink` wrapper.
 - `examples/miniaudio` contains a miniaudio `AudioSink` wrapper.
+- `examples/performance` compares software, hardware, and RGBA fallback paths.
 
 See `examples/README.md` for build notes.
 
@@ -107,6 +113,10 @@ Useful state:
 - `time`
 - `droppedFrames`
 - `presentedFrames`
+- `averageDecodeTimeMs`
+- `averageUploadTimeMs`
+- `currentVideoQueueSize`
+- `hardwareDecodeActive`
 
 Player options:
 
@@ -115,9 +125,38 @@ Player options:
 	?audioSink: hlmedia.audio.AudioSink,
 	?loop: Bool,
 	?volume: Float,
-	?startPaused: Bool
+	?startPaused: Bool,
+	?videoDecodeMode: hlmedia.types.VideoDecodeMode,
+	?allowHardwareFallback: Bool,
+	?preferNativePixelFormat: Bool
 }
 ```
+
+Decode modes:
+
+```haxe
+Software;
+HardwareAuto;
+HardwareD3D11VA;
+HardwareDXVA2;
+HardwareVAAPI;
+HardwareVideoToolbox;
+HardwareCUDA;
+HardwareD3D12VA;
+```
+
+Defaults:
+
+```haxe
+{
+	videoDecodeMode: Software,
+	allowHardwareFallback: true,
+	preferNativePixelFormat: true
+}
+```
+
+Pixel formats exposed by native frames are in `hlmedia.types.VideoPixelFormat`:
+`RGBA`, `YUV420P`, `NV12`, and `P010`. `P010` is reserved for future support.
 
 ## Build native library
 
@@ -148,7 +187,7 @@ cmake -S . -B out/build/default `
 cmake --build out/build/default --config Release
 ```
 
-The native output is `hlmedia.hdll`.
+The native output is copied to `native-libs/hlmedia.hdll`.
 
 ## Runtime files
 
@@ -161,6 +200,10 @@ Place these files next to your HashLink executable, or make them available on
 - `avutil-*.dll`
 - `swresample-*.dll`
 - `swscale-*.dll`
+
+The examples keep shared runtime files in `examples/`. Each example build runs
+`examples/copy-runtime.ps1`, which copies the current `native-libs` runtime files
+beside that example's `.hl` output.
 
 Release packages should also include:
 
@@ -189,3 +232,5 @@ Static FFmpeg linking is not supported.
 
 Use MP4/H.264/AAC files. A good default encoding command is documented in
 `tools/encode_mp4_h264_aac.md`.
+
+Examples use `examples/res/video/video.mp4` by default.

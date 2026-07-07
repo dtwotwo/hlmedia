@@ -3,8 +3,8 @@
 -cp ../../
 -lib heaps
 -lib hlsdl
--lib hlminiaudio
--hl simple.hl
+-lib hlopenal
+-hl performance.hl
 -main Main
 -D hlmedia
 --cmd powershell -NoProfile -ExecutionPolicy Bypass -File ../copy-runtime.ps1 .

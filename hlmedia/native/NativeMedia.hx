@@ -1,7 +1,8 @@
 package hlmedia.native;
 
 import haxe.io.Bytes;
-import hlmedia.VideoFrame.VideoPixelFormat;
+import hlmedia.types.VideoDecodeMode;
+import hlmedia.types.VideoPixelFormat;
 
 private typedef NativeHandleData = hl.Abstract<"hlmedia_decoder">;
 private typedef NativeFrameData = hl.Abstract<"hlmedia_frame">;
@@ -19,18 +20,23 @@ abstract NativeAudioChunk(NativeAudioChunkData) from NativeAudioChunkData to Nat
 @:hlNative("hlmedia")
 @:noDoc
 class NativeMedia {
-	public static inline function open(path:String):NativeHandle {
+	public static inline function open(path:String, decodeMode:VideoDecodeMode = Software, allowHardwareFallback = true, preferNativePixelFormat = true):NativeHandle {
 		final bytes = haxe.io.Bytes.alloc(path.length + 1);
 		bytes.blit(0, haxe.io.Bytes.ofString(path), 0, path.length);
 		bytes.set(path.length, 0);
-		return _open(@:privateAccess bytes.b);
+		return decodeMode == Software
+			&& allowHardwareFallback
+			&& preferNativePixelFormat ? _open(@:privateAccess bytes.b) : _openWithOptions(@:privateAccess bytes.b, decodeMode, allowHardwareFallback, preferNativePixelFormat);
 	}
 
-	public static inline function openBytes(path:String, bytes:Bytes):NativeHandle {
+	public static inline function openBytes(path:String, bytes:Bytes, decodeMode:VideoDecodeMode = Software, allowHardwareFallback = true, preferNativePixelFormat = true):NativeHandle {
 		final pathBytes = haxe.io.Bytes.alloc(path.length + 1);
 		pathBytes.blit(0, haxe.io.Bytes.ofString(path), 0, path.length);
 		pathBytes.set(path.length, 0);
-		return _openBytes(@:privateAccess pathBytes.b, @:privateAccess bytes.b, bytes.length);
+		return decodeMode == Software
+			&& allowHardwareFallback
+			&& preferNativePixelFormat ? _openBytes(@:privateAccess pathBytes.b, @:privateAccess bytes.b, bytes.length) : _openBytesWithOptions(@:privateAccess pathBytes.b, @:privateAccess bytes.b, bytes.length, decodeMode, allowHardwareFallback,
+				preferNativePixelFormat);
 	}
 
 	@:hlNative("hlmedia", "open")
@@ -38,8 +44,18 @@ class NativeMedia {
 		return null;
 	}
 
+	@:hlNative("hlmedia", "open_with_options")
+	static function _openWithOptions(path:hl.Bytes, decodeMode:Int, allowHardwareFallback:Bool, preferNativePixelFormat:Bool):NativeHandle {
+		return null;
+	}
+
 	@:hlNative("hlmedia", "open_bytes")
 	static function _openBytes(path:hl.Bytes, bytes:hl.Bytes, size:Int):NativeHandle {
+		return null;
+	}
+
+	@:hlNative("hlmedia", "open_bytes_with_options")
+	static function _openBytesWithOptions(path:hl.Bytes, bytes:hl.Bytes, size:Int, decodeMode:Int, allowHardwareFallback:Bool, preferNativePixelFormat:Bool):NativeHandle {
 		return null;
 	}
 
@@ -88,6 +104,25 @@ class NativeMedia {
 	@:hlNative("hlmedia", "has_audio")
 	public static function hasAudio(handle:NativeHandle):Bool {
 		return false;
+	}
+
+	@:hlNative("hlmedia", "hardware_decode_active")
+	public static function hardwareDecodeActive(handle:NativeHandle):Bool {
+		return false;
+	}
+
+	@:hlNative("hlmedia", "video_queue_size")
+	public static function videoQueueSize(handle:NativeHandle):Int {
+		return 0;
+	}
+
+	public static inline function hardwareDecodeBackend(handle:NativeHandle):String {
+		return @:privateAccess String.fromUTF8(_hardwareDecodeBackend(handle));
+	}
+
+	@:hlNative("hlmedia", "hardware_decode_backend")
+	static function _hardwareDecodeBackend(handle:NativeHandle):hl.Bytes {
+		return null;
 	}
 
 	@:hlNative("hlmedia", "sample_rate")
@@ -148,8 +183,9 @@ class NativeMedia {
 	public static function frameFormat(frame:NativeFrame):VideoPixelFormat {
 		return switch frameFormatIndex(frame) {
 			case 1: YUV420P;
-			case 2: RGBAFallback;
-			default: NV12;
+			case 2: NV12;
+			case 3: P010;
+			default: RGBA;
 		}
 	}
 
@@ -160,6 +196,21 @@ class NativeMedia {
 
 	@:hlNative("hlmedia", "frame_height")
 	public static function frameHeight(frame:NativeFrame):Int {
+		return 0;
+	}
+
+	@:hlNative("hlmedia", "frame_plane_count")
+	public static function framePlaneCount(frame:NativeFrame):Int {
+		return 0;
+	}
+
+	@:hlNative("hlmedia", "frame_plane_width")
+	public static function framePlaneWidth(frame:NativeFrame, plane:Int):Int {
+		return 0;
+	}
+
+	@:hlNative("hlmedia", "frame_plane_height")
+	public static function framePlaneHeight(frame:NativeFrame, plane:Int):Int {
 		return 0;
 	}
 

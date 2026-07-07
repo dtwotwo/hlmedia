@@ -1,4 +1,5 @@
 -cp .
+-cp ../
 -cp ../../
 -lib heaps
 -lib hlsdl
@@ -6,3 +7,4 @@
 -hl simple.hl
 -main Main
 -D hlmedia
+--cmd powershell -NoProfile -ExecutionPolicy Bypass -File ../copy-runtime.ps1 .

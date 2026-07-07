@@ -3,6 +3,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/log.h>
 #include <libavutil/opt.h>
@@ -20,11 +21,16 @@
 static void media_decoder_configure_logs(void);
 static void media_decoder_log_callback(void* ptr, int level, const char* fmt, va_list vl);
 static bool media_decoder_open_stream_codecs(MediaDecoder* decoder);
+static bool media_decoder_configure_hardware(MediaDecoder* decoder, const AVCodec* codec);
+static void media_decoder_clear_hardware(MediaDecoder* decoder);
+static enum AVPixelFormat media_decoder_get_hw_format(AVCodecContext* ctx, const enum AVPixelFormat* pixFmts);
 static bool media_decoder_open_format(MediaDecoder* decoder);
 static bool media_decoder_decode_packet(MediaDecoder* decoder, AVPacket* packet);
 static bool media_decoder_receive_video_frames(MediaDecoder* decoder);
 static bool media_decoder_receive_audio_frames(MediaDecoder* decoder);
 static bool media_decoder_queue_video_frame(MediaDecoder* decoder, AVFrame* frame);
+static bool media_decoder_queue_native_video_frame(MediaDecoder* decoder, AVFrame* frame, HlmediaPixelFormat format, int planeCount, const int* planeWidths, const int* planeHeights, const int* planeBytesPerPixel);
+static bool media_decoder_queue_rgba_frame(MediaDecoder* decoder, AVFrame* frame);
 static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* frame);
 static int media_decoder_read_packet(void* opaque, uint8_t* buffer, int bufferSize);
 static int64_t media_decoder_seek_input(void* opaque, int64_t offset, int whence);
@@ -49,6 +55,10 @@ MediaDecoder* media_decoder_create(void) {
 		media_decoder_destroy(decoder);
 		return NULL;
 	}
+	decoder->videoDecodeMode = HLMEDIA_VIDEO_DECODE_SOFTWARE;
+	decoder->allowHardwareFallback = true;
+	decoder->preferNativePixelFormat = true;
+	decoder->hwPixelFormat = AV_PIX_FMT_NONE;
 	decoder->videoStream = -1;
 	decoder->audioStream = -1;
 	decoder->paused = true;
@@ -57,6 +67,14 @@ MediaDecoder* media_decoder_create(void) {
 	frame_queue_init(&decoder->videoQueue);
 	audio_queue_init(&decoder->audioQueue);
 	return decoder;
+}
+
+void media_decoder_set_video_options(MediaDecoder* decoder, HlmediaVideoDecodeMode decodeMode, bool allowHardwareFallback, bool preferNativePixelFormat) {
+	if (decoder == NULL)
+		return;
+	decoder->videoDecodeMode = decodeMode;
+	decoder->allowHardwareFallback = allowHardwareFallback;
+	decoder->preferNativePixelFormat = preferNativePixelFormat;
 }
 
 static void media_decoder_configure_logs(void) {
@@ -68,10 +86,14 @@ static void media_decoder_configure_logs(void) {
 }
 
 static void media_decoder_log_callback(void* ptr, int level, const char* fmt, va_list vl) {
+	if (level > AV_LOG_WARNING)
+		return;
+
 	if (fmt != NULL
 		&& (strstr(fmt, "Could not update timestamps for discarded samples") != NULL
 			|| strstr(fmt, "Could not update timestamps for skipped samples") != NULL))
 		return;
+
 	av_log_default_callback(ptr, level, fmt, vl);
 }
 
@@ -123,12 +145,14 @@ bool media_decoder_open_bytes(MediaDecoder* decoder, const char* path, const uin
 		media_decoder_set_error(decoder, "Failed to allocate media input buffer");
 		return false;
 	}
+
 	decoder->avioContext = avio_alloc_context(avioBuffer, avioBufferSize, 0, decoder, media_decoder_read_packet, NULL, media_decoder_seek_input);
 	if (decoder->avioContext == NULL) {
 		av_free(avioBuffer);
 		media_decoder_set_error(decoder, "Failed to create media input");
 		return false;
 	}
+
 	decoder->formatContext = avformat_alloc_context();
 	if (decoder->formatContext == NULL) {
 		media_decoder_set_error(decoder, "Failed to allocate media format context");
@@ -150,6 +174,7 @@ static bool media_decoder_open_format(MediaDecoder* decoder) {
 		media_decoder_set_error(decoder, "Failed to read stream info");
 		return false;
 	}
+
 	if (!media_decoder_open_stream_codecs(decoder))
 		return false;
 
@@ -166,18 +191,25 @@ void media_decoder_close(MediaDecoder* decoder) {
 		sws_freeContext(decoder->swsContext);
 		decoder->swsContext = NULL;
 	}
+
 	if (decoder->swrContext != NULL)
 		swr_free(&decoder->swrContext);
+
 	if (decoder->videoCodecContext != NULL)
 		avcodec_free_context(&decoder->videoCodecContext);
+
+	media_decoder_clear_hardware(decoder);
 	if (decoder->audioCodecContext != NULL)
 		avcodec_free_context(&decoder->audioCodecContext);
+
 	if (decoder->formatContext != NULL)
 		avformat_close_input(&decoder->formatContext);
+
 	if (decoder->avioContext != NULL) {
 		av_freep(&decoder->avioContext->buffer);
 		avio_context_free(&decoder->avioContext);
 	}
+
 	free(decoder->inputBytes);
 	decoder->inputBytes = NULL;
 	decoder->inputSize = 0;
@@ -186,6 +218,9 @@ void media_decoder_close(MediaDecoder* decoder) {
 	decoder->audioStream = -1;
 	decoder->audioTrimBefore = 0.0;
 	decoder->eof = false;
+	decoder->hwEnabled = false;
+	decoder->hwAccepted = false;
+	decoder->hwPixelFormat = AV_PIX_FMT_NONE;
 	media_info_clear(&decoder->info);
 	decoder->info.sampleRate = 48000;
 	decoder->info.channels = 2;
@@ -201,21 +236,46 @@ static bool media_decoder_open_stream_codecs(MediaDecoder* decoder) {
 				media_decoder_set_error(decoder, "Unsupported video codec");
 				return false;
 			}
+
 			decoder->videoCodecContext = avcodec_alloc_context3(codec);
 			if (decoder->videoCodecContext == NULL) {
 				media_decoder_set_error(decoder, "Failed to allocate video codec context");
 				return false;
 			}
+
 			if (avcodec_parameters_to_context(decoder->videoCodecContext, params) < 0) {
 				media_decoder_set_error(decoder, "Failed to configure video codec");
 				avcodec_free_context(&decoder->videoCodecContext);
 				return false;
 			}
-			if (avcodec_open2(decoder->videoCodecContext, codec, NULL) < 0) {
-				media_decoder_set_error(decoder, "Failed to open video codec");
-				avcodec_free_context(&decoder->videoCodecContext);
-				return false;
+
+			if (!media_decoder_configure_hardware(decoder, codec)) {
+				if (!decoder->allowHardwareFallback) {
+					avcodec_free_context(&decoder->videoCodecContext);
+					return false;
+				}
+				av_log(NULL, AV_LOG_WARNING, "[hlmedia] hardware decode unavailable; falling back to software\n");
 			}
+
+			if (avcodec_open2(decoder->videoCodecContext, codec, NULL) < 0) {
+				if (decoder->hwEnabled && decoder->allowHardwareFallback) {
+					av_log(NULL, AV_LOG_WARNING, "[hlmedia] hardware codec open failed; falling back to software\n");
+					avcodec_free_context(&decoder->videoCodecContext);
+					media_decoder_clear_hardware(decoder);
+					decoder->videoCodecContext = avcodec_alloc_context3(codec);
+
+					if (decoder->videoCodecContext == NULL || avcodec_parameters_to_context(decoder->videoCodecContext, params) < 0 || avcodec_open2(decoder->videoCodecContext, codec, NULL) < 0) {
+						media_decoder_set_error(decoder, "Failed to open video codec");
+						avcodec_free_context(&decoder->videoCodecContext);
+						return false;
+					}
+				} else {
+					media_decoder_set_error(decoder, "Failed to open video codec");
+					avcodec_free_context(&decoder->videoCodecContext);
+					return false;
+				}
+			}
+
 			decoder->videoStream = (int)i;
 			decoder->info.width = decoder->videoCodecContext->width;
 			decoder->info.height = decoder->videoCodecContext->height;
@@ -226,21 +286,26 @@ static bool media_decoder_open_stream_codecs(MediaDecoder* decoder) {
 			const AVCodec* codec = avcodec_find_decoder(params->codec_id);
 			if (codec == NULL)
 				continue;
+
 			decoder->audioCodecContext = avcodec_alloc_context3(codec);
 			if (decoder->audioCodecContext == NULL)
 				continue;
+
 			if (avcodec_parameters_to_context(decoder->audioCodecContext, params) < 0) {
 				avcodec_free_context(&decoder->audioCodecContext);
 				continue;
 			}
+
 			if (avcodec_open2(decoder->audioCodecContext, codec, NULL) < 0) {
 				avcodec_free_context(&decoder->audioCodecContext);
 				continue;
 			}
+
 			if (decoder->audioCodecContext->sample_rate <= 0) {
 				avcodec_free_context(&decoder->audioCodecContext);
 				continue;
 			}
+
 			decoder->audioStream = (int)i;
 			decoder->info.hasAudio = true;
 			decoder->info.audioCodec = hlmedia_strdup(codec->name != NULL ? codec->name : "");
@@ -254,6 +319,103 @@ static bool media_decoder_open_stream_codecs(MediaDecoder* decoder) {
 		return false;
 	}
 	return true;
+}
+
+static bool media_decoder_configure_hardware(MediaDecoder* decoder, const AVCodec* codec) {
+	if (decoder->videoDecodeMode == HLMEDIA_VIDEO_DECODE_SOFTWARE)
+		return true;
+
+	const char* requestedDevice = NULL;
+	switch (decoder->videoDecodeMode) {
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_D3D11VA:
+			requestedDevice = "d3d11va";
+			break;
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_DXVA2:
+			requestedDevice = "dxva2";
+			break;
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_VAAPI:
+			requestedDevice = "vaapi";
+			break;
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_VIDEOTOOLBOX:
+			requestedDevice = "videotoolbox";
+			break;
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_CUDA:
+			requestedDevice = "cuda";
+			break;
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_D3D12VA:
+			requestedDevice = "d3d12va";
+			break;
+		case HLMEDIA_VIDEO_DECODE_HARDWARE_AUTO:
+#if defined(_WIN32)
+			requestedDevice = "d3d11va";
+#elif defined(__APPLE__)
+			requestedDevice = "videotoolbox";
+#else
+			requestedDevice = "vaapi";
+#endif
+			break;
+		default:
+			media_decoder_set_error(decoder, "Unsupported hardware decode mode");
+			return false;
+	}
+
+	decoder->hwDeviceType = av_hwdevice_find_type_by_name(requestedDevice);
+	if (decoder->hwDeviceType == AV_HWDEVICE_TYPE_NONE) {
+		media_decoder_set_error(decoder, "Requested hardware device type is not available in this FFmpeg build");
+		return false;
+	}
+
+	for (int i = 0;; ++i) {
+		const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
+		if (config == NULL) {
+			media_decoder_set_error(decoder, "Video codec does not support the requested hardware decode mode");
+			return false;
+		}
+		if ((config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0 && config->device_type == decoder->hwDeviceType) {
+			decoder->hwPixelFormat = config->pix_fmt;
+			break;
+		}
+	}
+
+	const int result = av_hwdevice_ctx_create(&decoder->hwDeviceContext, decoder->hwDeviceType, NULL, NULL, 0);
+	if (result < 0) {
+		media_decoder_set_error(decoder, "Failed to create hardware video device");
+		return false;
+	}
+
+	decoder->videoCodecContext->hw_device_ctx = av_buffer_ref(decoder->hwDeviceContext);
+	if (decoder->videoCodecContext->hw_device_ctx == NULL) {
+		media_decoder_clear_hardware(decoder);
+		media_decoder_set_error(decoder, "Failed to attach hardware video device");
+		return false;
+	}
+	decoder->videoCodecContext->get_format = media_decoder_get_hw_format;
+	decoder->videoCodecContext->opaque = decoder;
+	decoder->hwEnabled = true;
+	return true;
+}
+
+static void media_decoder_clear_hardware(MediaDecoder* decoder) {
+	if (decoder->hwDeviceContext != NULL)
+		av_buffer_unref(&decoder->hwDeviceContext);
+	decoder->hwEnabled = false;
+	decoder->hwAccepted = false;
+	decoder->hwPixelFormat = AV_PIX_FMT_NONE;
+}
+
+static enum AVPixelFormat media_decoder_get_hw_format(AVCodecContext* ctx, const enum AVPixelFormat* pixFmts) {
+	MediaDecoder* decoder = (MediaDecoder*)ctx->opaque;
+	if (decoder != NULL) {
+		for (const enum AVPixelFormat* p = pixFmts; *p != AV_PIX_FMT_NONE; ++p) {
+			if (*p == decoder->hwPixelFormat) {
+				decoder->hwAccepted = true;
+				return *p;
+			}
+		}
+	}
+
+	av_log(NULL, AV_LOG_WARNING, "[hlmedia] requested hardware pixel format was not offered; using %s\n", av_get_pix_fmt_name(pixFmts[0]));
+	return pixFmts[0];
 }
 
 int media_decoder_decode(MediaDecoder* decoder) {
@@ -285,10 +447,12 @@ static bool media_decoder_decode_packet(MediaDecoder* decoder, AVPacket* packet)
 				return false;
 			result = avcodec_send_packet(decoder->videoCodecContext, packet);
 		}
+
 		if (result < 0) {
 			media_decoder_set_error(decoder, "Failed to send video packet");
 			return false;
 		}
+
 		return media_decoder_receive_video_frames(decoder);
 	}
 	if (packet->stream_index == decoder->audioStream && decoder->audioCodecContext != NULL) {
@@ -298,10 +462,12 @@ static bool media_decoder_decode_packet(MediaDecoder* decoder, AVPacket* packet)
 				return false;
 			result = avcodec_send_packet(decoder->audioCodecContext, packet);
 		}
+
 		if (result < 0) {
 			media_decoder_set_error(decoder, "Failed to send audio packet");
 			return false;
 		}
+
 		return media_decoder_receive_audio_frames(decoder);
 	}
 	return true;
@@ -312,14 +478,33 @@ static bool media_decoder_receive_video_frames(MediaDecoder* decoder) {
 		const int result = avcodec_receive_frame(decoder->videoCodecContext, decoder->videoFrame);
 		if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
 			return true;
+
 		if (result < 0) {
 			media_decoder_set_error(decoder, "Failed to decode video frame");
 			return false;
 		}
-		if (!media_decoder_queue_video_frame(decoder, decoder->videoFrame)) {
+
+		AVFrame* queuedFrame = decoder->videoFrame;
+		AVFrame* softwareFrame = NULL;
+		if (decoder->hwEnabled && decoder->videoFrame->format == decoder->hwPixelFormat) {
+			softwareFrame = av_frame_alloc();
+			if (softwareFrame == NULL || av_hwframe_transfer_data(softwareFrame, decoder->videoFrame, 0) < 0) {
+				av_frame_free(&softwareFrame);
+				av_frame_unref(decoder->videoFrame);
+				av_log(NULL, AV_LOG_WARNING, "[hlmedia] hardware frame transfer failed; skipping frame\n");
+				continue;
+			}
+			softwareFrame->best_effort_timestamp = decoder->videoFrame->best_effort_timestamp;
+			queuedFrame = softwareFrame;
+		}
+
+		if (!media_decoder_queue_video_frame(decoder, queuedFrame)) {
+			av_frame_free(&softwareFrame);
 			av_frame_unref(decoder->videoFrame);
 			return false;
 		}
+
+		av_frame_free(&softwareFrame);
 		av_frame_unref(decoder->videoFrame);
 	}
 }
@@ -329,10 +514,12 @@ static bool media_decoder_receive_audio_frames(MediaDecoder* decoder) {
 		const int result = avcodec_receive_frame(decoder->audioCodecContext, decoder->audioFrame);
 		if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
 			return true;
+
 		if (result < 0) {
 			media_decoder_set_error(decoder, "Failed to decode audio frame");
 			return false;
 		}
+
 		if (!media_decoder_queue_audio_frame(decoder, decoder->audioFrame)) {
 			av_frame_unref(decoder->audioFrame);
 			return false;
@@ -342,16 +529,85 @@ static bool media_decoder_receive_audio_frames(MediaDecoder* decoder) {
 }
 
 static bool media_decoder_queue_video_frame(MediaDecoder* decoder, AVFrame* frame) {
+	if (decoder->preferNativePixelFormat) {
+		if (frame->format == AV_PIX_FMT_NV12) {
+			const int planeWidths[] = {frame->width, (frame->width + 1) * .5, 0};
+			const int planeHeights[] = {frame->height, (frame->height + 1) * .5, 0};
+			const int planeBytesPerPixel[] = {1, 2, 0};
+			return media_decoder_queue_native_video_frame(decoder, frame, HLMEDIA_PIXEL_FORMAT_NV12, 2, planeWidths, planeHeights, planeBytesPerPixel);
+		}
+
+		if (frame->format == AV_PIX_FMT_YUV420P || frame->format == AV_PIX_FMT_YUVJ420P) {
+			const int planeWidths[] = {frame->width, (frame->width + 1) * .5, (frame->width + 1) * .5};
+			const int planeHeights[] = {frame->height, (frame->height + 1) * .5, (frame->height + 1) * .5};
+			const int planeBytesPerPixel[] = {1, 1, 1};
+			return media_decoder_queue_native_video_frame(decoder, frame, HLMEDIA_PIXEL_FORMAT_YUV420P, 3, planeWidths, planeHeights, planeBytesPerPixel);
+		}
+	}
+	return media_decoder_queue_rgba_frame(decoder, frame);
+}
+
+static bool media_decoder_queue_native_video_frame(MediaDecoder* decoder, AVFrame* frame, HlmediaPixelFormat format, int planeCount, const int* planeWidths, const int* planeHeights, const int* planeBytesPerPixel) {
+	HlmediaFrame out = {0};
+	out.pts = frame->best_effort_timestamp == AV_NOPTS_VALUE ? 0.0 : media_decoder_packet_time(decoder, decoder->videoStream, frame->best_effort_timestamp);
+	out.width = frame->width;
+	out.height = frame->height;
+	out.format = format;
+	out.planeCount = planeCount;
+	if (out.width <= 0 || out.height <= 0 || av_image_check_size((unsigned int)out.width, (unsigned int)out.height, 0, NULL) < 0) {
+		media_decoder_set_error(decoder, "Invalid video frame size");
+		return false;
+	}
+
+	for (int plane = 0; plane < planeCount; ++plane) {
+		const int rowBytes = planeWidths[plane] * planeBytesPerPixel[plane];
+		const int stride = frame->linesize[plane];
+		if (frame->data[plane] == NULL || rowBytes <= 0 || planeHeights[plane] <= 0 || stride < rowBytes) {
+			hlmedia_frame_free(&out);
+			media_decoder_set_error(decoder, "Invalid video frame plane");
+			return false;
+		}
+		if ((size_t)planeHeights[plane] > SIZE_MAX / (size_t)stride) {
+			hlmedia_frame_free(&out);
+			media_decoder_set_error(decoder, "Video frame plane is too large");
+			return false;
+		}
+		out.strides[plane] = stride;
+		out.planeWidths[plane] = planeWidths[plane];
+		out.planeHeights[plane] = planeHeights[plane];
+		out.planeSizes[plane] = (size_t)stride * (size_t)planeHeights[plane];
+		out.planes[plane] = (uint8_t*)malloc(out.planeSizes[plane]);
+		if (out.planes[plane] == NULL) {
+			hlmedia_frame_free(&out);
+			media_decoder_set_error(decoder, "Failed to allocate video frame");
+			return false;
+		}
+		for (int row = 0; row < planeHeights[plane]; ++row)
+			memcpy(out.planes[plane] + (size_t)row * (size_t)stride, frame->data[plane] + (size_t)row * (size_t)frame->linesize[plane], (size_t)rowBytes);
+	}
+
+	if (!frame_queue_push(&decoder->videoQueue, &out)) {
+		hlmedia_frame_free(&out);
+		media_decoder_set_error(decoder, "Failed to queue video frame");
+		return false;
+	}
+	return true;
+}
+
+static bool media_decoder_queue_rgba_frame(MediaDecoder* decoder, AVFrame* frame) {
 	HlmediaFrame out = {0};
 	out.pts = frame->best_effort_timestamp == AV_NOPTS_VALUE ? 0.0 : media_decoder_packet_time(decoder, decoder->videoStream, frame->best_effort_timestamp);
 	out.width = frame->width;
 	out.height = frame->height;
 	out.format = HLMEDIA_PIXEL_FORMAT_RGBA;
-	if (out.width <= 0 || out.height <= 0 || av_image_check_size((unsigned int)out.width, (unsigned int)out.height, 0, NULL) < 0 || out.width > INT_MAX / 4) {
+	out.planeCount = 1;
+	if (out.width <= 0 || out.height <= 0 || av_image_check_size((unsigned int)out.width, (unsigned int)out.height, 0, NULL) < 0 || out.width > INT_MAX * .25) {
 		media_decoder_set_error(decoder, "Invalid video frame size");
 		return false;
 	}
 	out.strides[0] = out.width * 4;
+	out.planeWidths[0] = out.width;
+	out.planeHeights[0] = out.height;
 	if ((size_t)out.height > SIZE_MAX / (size_t)out.strides[0]) {
 		media_decoder_set_error(decoder, "Video frame is too large");
 		return false;
@@ -418,6 +674,7 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 		media_decoder_set_error(decoder, "Invalid audio frame size");
 		return false;
 	}
+
 	const int maxOut = (int)maxOut64;
 	float* samples = (float*)malloc((size_t)maxOut * 2 * sizeof(float));
 	if (samples == NULL) {
@@ -432,6 +689,7 @@ static bool media_decoder_queue_audio_frame(MediaDecoder* decoder, AVFrame* fram
 		media_decoder_set_error(decoder, "Failed to resample audio");
 		return false;
 	}
+
 	if ((size_t)frames > SIZE_MAX / (2 * sizeof(float))) {
 		free(samples);
 		media_decoder_set_error(decoder, "Audio chunk is too large");
@@ -484,6 +742,7 @@ static int media_decoder_read_packet(void* opaque, uint8_t* buffer, int bufferSi
 		return AVERROR_EOF;
 	if (decoder->inputPosition >= decoder->inputSize)
 		return AVERROR_EOF;
+
 	size_t remaining = decoder->inputSize - decoder->inputPosition;
 	size_t readSize = remaining < (size_t)bufferSize ? remaining : (size_t)bufferSize;
 	memcpy(buffer, decoder->inputBytes + decoder->inputPosition, readSize);
@@ -515,17 +774,20 @@ static int64_t media_decoder_seek_input(void* opaque, int64_t offset, int whence
 bool media_decoder_seek(MediaDecoder* decoder, double seconds) {
 	if (decoder->formatContext == NULL)
 		return false;
+
 	const int64_t timestamp = (int64_t)(seconds * AV_TIME_BASE);
 	if (av_seek_frame(decoder->formatContext, -1, timestamp, AVSEEK_FLAG_BACKWARD) < 0) {
 		media_decoder_set_error(decoder, "Seek failed");
 		return false;
 	}
+
 	if (decoder->videoCodecContext != NULL)
 		avcodec_flush_buffers(decoder->videoCodecContext);
 	if (decoder->audioCodecContext != NULL)
 		avcodec_flush_buffers(decoder->audioCodecContext);
 	if (decoder->swrContext != NULL)
 		swr_free(&decoder->swrContext);
+
 	media_decoder_flush_queues(decoder);
 	decoder->audioTrimBefore = seconds;
 	decoder->eof = false;
@@ -566,6 +828,7 @@ const char* media_decoder_get_last_error(const MediaDecoder* decoder) {
 void hlmedia_frame_free(HlmediaFrame* frame) {
 	if (frame == NULL)
 		return;
+
 	for (int i = 0; i < 3; ++i) {
 		free(frame->planes[i]);
 		frame->planes[i] = NULL;
@@ -603,9 +866,11 @@ static void media_decoder_set_open_error(MediaDecoder* decoder, const char* path
 		media_decoder_set_error(decoder, "Failed to open media file");
 		return;
 	}
+
 	char* message = (char*)malloc((size_t)size + 1);
 	if (message == NULL)
 		return;
+
 	snprintf(message, (size_t)size + 1, "Failed to open media file '%s': %s", path != NULL ? path : "", error);
 	free(decoder->lastError);
 	decoder->lastError = message;

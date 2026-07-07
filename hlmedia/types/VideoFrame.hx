@@ -1,59 +1,4 @@
-package hlmedia;
-
-/**
-	Pixel layouts returned by the native decoder.
-**/
-enum VideoPixelFormat {
-	/**
-		Luma plane plus interleaved chroma plane.
-	**/
-	NV12;
-
-	/**
-		Separate luma, U, and V planes.
-	**/
-	YUV420P;
-
-	/**
-		Packed RGBA pixels used when planar upload is bypassed.
-	**/
-	RGBAFallback;
-}
-
-/**
-	YUV color conversion matrices supported by `VideoShader`.
-**/
-enum VideoColorSpace {
-	/**
-		SD video color conversion matrix.
-	**/
-	BT601;
-
-	/**
-		HD video color conversion matrix.
-	**/
-	BT709;
-
-	/**
-		UHD and HDR video color conversion matrix.
-	**/
-	BT2020;
-}
-
-/**
-	Video plane value range used during YUV to RGB conversion.
-**/
-enum VideoColorRange {
-	/**
-		Studio range luma/chroma values.
-	**/
-	Limited;
-
-	/**
-		Full range luma/chroma values.
-	**/
-	Full;
-}
+package hlmedia.types;
 
 /**
 	Decoded video frame data passed from the native decoder to `VideoTexture`.
@@ -80,7 +25,12 @@ typedef VideoFrame = {
 	final format:VideoPixelFormat;
 
 	/**
-		Luma plane for NV12/YUV420P, or packed RGBA bytes for RGBAFallback.
+		Number of populated frame planes.
+	**/
+	final planeCount:Int;
+
+	/**
+		Luma plane for NV12/YUV420P, or packed RGBA bytes for RGBA frames.
 	**/
 	final y:haxe.io.Bytes;
 
@@ -118,4 +68,14 @@ typedef VideoFrame = {
 		Row stride, in bytes, for the interleaved UV plane.
 	**/
 	final uvStride:Int;
+
+	/**
+		Per-plane widths in pixels.
+	**/
+	final planeWidths:Array<Int>;
+
+	/**
+		Per-plane heights in pixels.
+	**/
+	final planeHeights:Array<Int>;
 }

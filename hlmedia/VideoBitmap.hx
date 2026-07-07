@@ -22,6 +22,7 @@ class VideoBitmap extends Bitmap {
 		this.fitScene = fitScene;
 		texture = player.getTexture();
 		super(Tile.fromTexture(texture), parent);
+		addShader(player.videoTexture.shader);
 	}
 
 	override function draw(ctx:RenderContext):Void {
@@ -30,6 +31,7 @@ class VideoBitmap extends Bitmap {
 			texture = current;
 			tile = Tile.fromTexture(texture);
 		}
+
 		if (fitScene && texture.width > 1 && texture.height > 1)
 			fitToScene();
 		super.draw(ctx);

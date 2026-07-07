@@ -10,7 +10,9 @@ import hlmedia.audio.AudioSink;
 import hlmedia.audio.NullAudioSink;
 import hlmedia.native.NativeMedia;
 import hlmedia.MediaError;
-import hlmedia.VideoFrame.VideoPixelFormat;
+import hlmedia.types.VideoFrame;
+import hlmedia.types.VideoPixelFormat;
+import hlmedia.types.VideoDecodeMode;
 import hlmedia.VideoInfo.VideoPlayerOptions;
 
 /**
@@ -57,6 +59,31 @@ class VideoPlayer {
 	public var presentedFrames(default, null) = 0;
 
 	/**
+		Average time spent in native decode calls, in milliseconds.
+	**/
+	public var averageDecodeTimeMs(default, null) = 0.0;
+
+	/**
+		Average time spent uploading the selected frame, in milliseconds.
+	**/
+	public var averageUploadTimeMs(default, null) = 0.0;
+
+	/**
+		Current native video frame queue size.
+	**/
+	public var currentVideoQueueSize(default, null) = 0;
+
+	/**
+		True when the native decoder initialized a hardware device.
+	**/
+	public var hardwareDecodeActive(default, null) = false;
+
+	/**
+		Actual hardware backend accepted by FFmpeg, or `Software`.
+	**/
+	public var actualDecodeBackend(default, null) = "Software";
+
+	/**
 		Called when playback starts or resumes.
 	**/
 	public var onStart:Void->Void;
@@ -100,7 +127,8 @@ class VideoPlayer {
 		final path:String = resource == null ? cast source : resolveResourcePath(resource);
 		close();
 		handle = resource == null
-			|| isLocalResource(resource) ? NativeMedia.open(path) : NativeMedia.openBytes(path, resource.entry.getBytes());
+			|| isLocalResource(resource) ? NativeMedia.open(path, decodeMode(), allowHardwareFallback(),
+				preferNativePixelFormat()) : NativeMedia.openBytes(path, resource.entry.getBytes(), decodeMode(), allowHardwareFallback(), preferNativePixelFormat());
 		if (handle == null)
 			throw DecodeFailed(NativeMedia.lastError());
 
@@ -193,6 +221,11 @@ class VideoPlayer {
 		duration = 0;
 		droppedFrames = 0;
 		presentedFrames = 0;
+		averageDecodeTimeMs = 0;
+		averageUploadTimeMs = 0;
+		currentVideoQueueSize = 0;
+		hardwareDecodeActive = false;
+		actualDecodeBackend = "Software";
 		finished = false;
 		resetTimeCallbacks(0);
 	}
@@ -240,9 +273,19 @@ class VideoPlayer {
 				break;
 		}
 
-		for (_ in 0...8)
+		final decodeStart = haxe.Timer.stamp();
+		var decodeCalls = 0;
+		for (_ in 0...8) {
+			decodeCalls++;
 			if (NativeMedia.decode(handle) <= 0)
 				break;
+		}
+		if (decodeCalls > 0)
+			averageDecodeTimeMs = smoothAverage(averageDecodeTimeMs, (haxe.Timer.stamp() - decodeStart) * 1000);
+		currentVideoQueueSize = NativeMedia.videoQueueSize(handle);
+		hardwareDecodeActive = NativeMedia.hardwareDecodeActive(handle);
+		final hardwareBackend = NativeMedia.hardwareDecodeBackend(handle);
+		actualDecodeBackend = hardwareBackend.length == 0 ? "Software" : hardwareBackend;
 
 		final clockTime = clock.getTime();
 		if (info.hasAudio) {
@@ -347,9 +390,15 @@ class VideoPlayer {
 		}
 		if (selected != null) {
 			currentFrame = selected;
+			final uploadStart = haxe.Timer.stamp();
 			videoTexture.upload(selected);
+			averageUploadTimeMs = smoothAverage(averageUploadTimeMs, (haxe.Timer.stamp() - uploadStart) * 1000);
 			presentedFrames++;
 		}
+	}
+
+	private function smoothAverage(current:Float, sample:Float):Float {
+		return current == 0 ? sample : current * 0.9 + sample * 0.1;
 	}
 
 	private function finish():Void {
@@ -387,6 +436,7 @@ class VideoPlayer {
 			width: NativeMedia.frameWidth(frame),
 			height: NativeMedia.frameHeight(frame),
 			format: format,
+			planeCount: NativeMedia.framePlaneCount(frame),
 			y: NativeMedia.framePlane(frame, 0),
 			u: format == YUV420P ? NativeMedia.framePlane(frame, 1) : null,
 			v: format == YUV420P ? NativeMedia.framePlane(frame, 2) : null,
@@ -394,8 +444,28 @@ class VideoPlayer {
 			yStride: NativeMedia.frameStride(frame, 0),
 			uStride: NativeMedia.frameStride(frame, 1),
 			vStride: NativeMedia.frameStride(frame, 2),
-			uvStride: NativeMedia.frameStride(frame, 1)
+			uvStride: NativeMedia.frameStride(frame, 1),
+			planeWidths: [
+				for (i in 0...NativeMedia.framePlaneCount(frame))
+					NativeMedia.framePlaneWidth(frame, i)
+			],
+			planeHeights: [
+				for (i in 0...NativeMedia.framePlaneCount(frame))
+					NativeMedia.framePlaneHeight(frame, i)
+			]
 		};
+	}
+
+	private function decodeMode():VideoDecodeMode {
+		return options.videoDecodeMode ?? Software;
+	}
+
+	private function allowHardwareFallback():Bool {
+		return options.allowHardwareFallback ?? true;
+	}
+
+	private function preferNativePixelFormat():Bool {
+		return options.preferNativePixelFormat ?? true;
 	}
 
 	private function requireOpen():Void {

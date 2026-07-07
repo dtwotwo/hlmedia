@@ -6,8 +6,8 @@ import haxe.io.Bytes;
 import hxd.Pixels;
 import hxd.PixelFormat;
 import hlmedia.MediaError;
-import hlmedia.VideoFrame.VideoFrame;
-import hlmedia.VideoFrame.VideoPixelFormat;
+import hlmedia.types.VideoFrame;
+import hlmedia.types.VideoPixelFormat;
 
 /**
 	GPU texture set used to upload decoded video frames.
@@ -22,6 +22,11 @@ class VideoTexture {
 		RGB texture for display.
 	**/
 	public var output(default, null):Texture;
+
+	/**
+		Pixel layout of the currently allocated video textures.
+	**/
+	public var pixelFormat(default, null):VideoPixelFormat = RGBA;
 
 	/**
 		Luma texture for NV12 and YUV420P frames.
@@ -57,7 +62,9 @@ class VideoTexture {
 		uTexture = filledTexture(1, 1, R8, 128);
 		vTexture = filledTexture(1, 1, R8, 128);
 		uvTexture = filledTexture(1, 1, RG8, 128);
-		shader.useNV12 = true;
+		shader.useRGBA = true;
+		shader.useNV12 = false;
+		shader.rgbaTexture = output;
 		shader.yTexture = yTexture;
 		shader.uTexture = uTexture;
 		shader.vTexture = vTexture;
@@ -72,21 +79,27 @@ class VideoTexture {
 
 		switch frame.format {
 			case NV12:
-				uploadPlane(yTexture, frame.y, frame.width, frame.height, frame.yStride, R8);
-				uploadPlane(uvTexture, frame.uv, frame.width >> 1, frame.height >> 1, frame.uvStride, RG8);
+				uploadPlane(yTexture, frame.y, planeWidth(frame, 0), planeHeight(frame, 0), frame.yStride, R8);
+				uploadPlane(uvTexture, frame.uv, planeWidth(frame, 1), planeHeight(frame, 1), frame.uvStride, RG8);
+				shader.useRGBA = false;
 				shader.useNV12 = true;
 				shader.yTexture = yTexture;
 				shader.uvTexture = uvTexture;
 			case YUV420P:
-				uploadPlane(yTexture, frame.y, frame.width, frame.height, frame.yStride, R8);
-				uploadPlane(uTexture, frame.u, frame.width >> 1, frame.height >> 1, frame.uStride, R8);
-				uploadPlane(vTexture, frame.v, frame.width >> 1, frame.height >> 1, frame.vStride, R8);
+				uploadPlane(yTexture, frame.y, planeWidth(frame, 0), planeHeight(frame, 0), frame.yStride, R8);
+				uploadPlane(uTexture, frame.u, planeWidth(frame, 1), planeHeight(frame, 1), frame.uStride, R8);
+				uploadPlane(vTexture, frame.v, planeWidth(frame, 2), planeHeight(frame, 2), frame.vStride, R8);
+				shader.useRGBA = false;
 				shader.useNV12 = false;
 				shader.yTexture = yTexture;
 				shader.uTexture = uTexture;
 				shader.vTexture = vTexture;
-			case RGBAFallback:
+			case RGBA:
 				uploadPlane(output, frame.y, frame.width, frame.height, frame.yStride, RGBA);
+				shader.useRGBA = true;
+				shader.rgbaTexture = output;
+			case P010:
+				throw TextureUploadFailed("P010 video frames are not supported yet");
 		}
 	}
 
@@ -107,6 +120,7 @@ class VideoTexture {
 		this.width = width;
 		this.height = height;
 		this.format = format;
+		pixelFormat = format;
 
 		final flags = [TextureFlags.Dynamic];
 		output = filledTexture(width, height, RGBA, 255);
@@ -115,18 +129,21 @@ class VideoTexture {
 				yTexture = new Texture(width, height, flags, R8);
 				uTexture = filledTexture(1, 1, R8, 128);
 				vTexture = filledTexture(1, 1, R8, 128);
-				uvTexture = new Texture(width >> 1, height >> 1, flags, RG8);
+				uvTexture = new Texture((width + 1) >> 1, (height + 1) >> 1, flags, RG8);
 			case YUV420P:
 				yTexture = new Texture(width, height, flags, R8);
-				uTexture = new Texture(width >> 1, height >> 1, flags, R8);
-				vTexture = new Texture(width >> 1, height >> 1, flags, R8);
+				uTexture = new Texture((width + 1) >> 1, (height + 1) >> 1, flags, R8);
+				vTexture = new Texture((width + 1) >> 1, (height + 1) >> 1, flags, R8);
 				uvTexture = filledTexture(1, 1, RG8, 128);
-			case RGBAFallback:
+			case RGBA:
 				yTexture = filledTexture(1, 1, R8, 0);
 				uTexture = filledTexture(1, 1, R8, 128);
 				vTexture = filledTexture(1, 1, R8, 128);
 				uvTexture = filledTexture(1, 1, RG8, 128);
+			case P010:
+				throw TextureUploadFailed("P010 video frames are not supported yet");
 		}
+		shader.rgbaTexture = output;
 		shader.yTexture = yTexture;
 		shader.uTexture = uTexture;
 		shader.vTexture = vTexture;
@@ -146,6 +163,14 @@ class VideoTexture {
 		}
 
 		texture.uploadPixels(new Pixels(width, height, packed, pixelFormat));
+	}
+
+	private function planeWidth(frame:VideoFrame, plane:Int):Int {
+		return plane < frame.planeWidths.length ? frame.planeWidths[plane] : frame.width;
+	}
+
+	private function planeHeight(frame:VideoFrame, plane:Int):Int {
+		return plane < frame.planeHeights.length ? frame.planeHeights[plane] : frame.height;
 	}
 
 	private function filledTexture(width:Int, height:Int, pixelFormat:PixelFormat, value:Int):Texture {

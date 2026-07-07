@@ -4,6 +4,9 @@
 #include "frame_queue.h"
 #include "media_types.h"
 
+#include <libavutil/hwcontext.h>
+#include <libavutil/pixfmt.h>
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -12,6 +15,7 @@ typedef struct AVCodecContext AVCodecContext;
 typedef struct AVFrame AVFrame;
 typedef struct AVPacket AVPacket;
 typedef struct AVIOContext AVIOContext;
+typedef struct AVBufferRef AVBufferRef;
 typedef struct SwrContext SwrContext;
 typedef struct SwsContext SwsContext;
 
@@ -25,6 +29,9 @@ typedef struct MediaDecoder {
 	AVPacket* packet;
 	SwrContext* swrContext;
 	SwsContext* swsContext;
+	AVBufferRef* hwDeviceContext;
+	enum AVPixelFormat hwPixelFormat;
+	enum AVHWDeviceType hwDeviceType;
 	int videoStream;
 	int audioStream;
 	uint8_t* inputBytes;
@@ -33,6 +40,11 @@ typedef struct MediaDecoder {
 	double audioTrimBefore;
 	bool eof;
 	bool paused;
+	bool hwEnabled;
+	bool hwAccepted;
+	bool allowHardwareFallback;
+	bool preferNativePixelFormat;
+	HlmediaVideoDecodeMode videoDecodeMode;
 	HlmediaInfo info;
 	FrameQueue videoQueue;
 	AudioQueue audioQueue;
@@ -41,6 +53,7 @@ typedef struct MediaDecoder {
 
 MediaDecoder* media_decoder_create(void);
 void media_decoder_destroy(MediaDecoder* decoder);
+void media_decoder_set_video_options(MediaDecoder* decoder, HlmediaVideoDecodeMode decodeMode, bool allowHardwareFallback, bool preferNativePixelFormat);
 bool media_decoder_open(MediaDecoder* decoder, const char* path);
 bool media_decoder_open_bytes(MediaDecoder* decoder, const char* path, const uint8_t* bytes, size_t size);
 void media_decoder_close(MediaDecoder* decoder);

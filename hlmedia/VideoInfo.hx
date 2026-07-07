@@ -1,6 +1,7 @@
 package hlmedia;
 
 import hlmedia.audio.AudioSink;
+import hlmedia.types.VideoDecodeMode;
 
 /**
 	Metadata read from the opened media file.
@@ -79,5 +80,20 @@ typedef VideoPlayerOptions = {
 	/**
 		Open the file without starting playback.
 	**/
-	?startPaused:Bool
+	?startPaused:Bool,
+
+	/**
+		Native video decoder backend. Defaults to software.
+	**/
+	?videoDecodeMode:VideoDecodeMode,
+
+	/**
+		Fall back to software decode when hardware setup fails. Defaults to true.
+	**/
+	?allowHardwareFallback:Bool,
+
+	/**
+		Upload native YUV/NV12 planes instead of forcing RGBA conversion. Defaults to true.
+	**/
+	?preferNativePixelFormat:Bool
 }

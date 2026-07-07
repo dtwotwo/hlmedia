@@ -109,6 +109,9 @@ jobs:
         with:
           haxe-version: ${{ matrix.haxe-version }}
 
+      - name: Install Haxe libraries
+        run: haxelib install heaps --quiet --always
+
       - name: Download HashLink
         shell: pwsh
         run: |
