@@ -36,7 +36,8 @@ class Main extends App {
 	}
 
 	override function dispose():Void {
-		video.close();
+		bitmap.remove();
+		video.dispose();
 		bitmap = null;
 		super.dispose();
 	}

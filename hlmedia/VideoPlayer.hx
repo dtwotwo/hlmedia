@@ -202,7 +202,8 @@ class VideoPlayer {
 	}
 
 	/**
-		Closes the file and releases decoder state.
+		Closes the current file and releases decoder state. The player can be
+		reused by calling `open()` again.
 	**/
 	public function close():Void {
 		if (handle != null) {
@@ -228,6 +229,15 @@ class VideoPlayer {
 		actualDecodeBackend = "Software";
 		finished = false;
 		resetTimeCallbacks(0);
+	}
+
+	/**
+		Closes the current file and releases the GPU textures owned by this
+		player. The player must not be reused after disposal.
+	**/
+	public function dispose():Void {
+		close();
+		videoTexture.dispose();
 	}
 
 	/**

@@ -8,6 +8,9 @@ import h3d.mat.Texture;
 
 /**
 	Heaps bitmap that follows a `VideoPlayer` output texture.
+
+	The bitmap does not own the player or its textures. Remove the bitmap from
+	its scene before disposing the player.
 **/
 class VideoBitmap extends Bitmap {
 	final player:VideoPlayer;

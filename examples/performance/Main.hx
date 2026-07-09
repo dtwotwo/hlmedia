@@ -81,8 +81,8 @@ class Main extends App {
 	}
 
 	private function openVideo():Void {
-		video?.close();
 		bitmap?.remove();
+		video?.dispose();
 
 		video = new VideoPlayer({
 			audioSink: new OpenALSink(),
@@ -136,7 +136,8 @@ class Main extends App {
 	}
 
 	override function dispose():Void {
-		video?.close();
+		bitmap?.remove();
+		video?.dispose();
 		super.dispose();
 	}
 

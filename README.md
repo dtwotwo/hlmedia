@@ -94,7 +94,9 @@ See `examples/README.md` for build notes.
 
 - `new(?options)` creates a player.
 - `open(pathOrResource)` opens a local file path or `hxd.res.Resource`.
-- `play()`, `pause()`, `stop()`, `close()` control playback.
+- `play()`, `pause()`, and `stop()` control playback.
+- `close()` closes the current video while keeping the player reusable.
+- `dispose()` closes the video and releases the player's GPU textures.
 - `seek(seconds)` jumps to a position.
 - `update(dt)` must be called every frame.
 - `createBitmap(s2d)` creates a `VideoBitmap` for normal Heaps 2D rendering.
@@ -103,6 +105,10 @@ See `examples/README.md` for build notes.
 - `setVolume(value)` clamps volume to `0...1`.
 - `setLoop(enabled)` changes loop behavior after construction.
 - `setAudioSink(sink)` replaces the audio output implementation.
+
+`VideoBitmap` does not own its player or textures. Remove the bitmap from its
+scene before calling `VideoPlayer.dispose()`. Do not reuse a disposed player.
+
 - `onStart`, `onFinish`, and `onTime(seconds, callback)` provide playback callbacks.
 
 Useful state:
