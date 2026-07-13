@@ -83,6 +83,21 @@ private function main() {
 		assertNear(0, clock.getTime(), 0.001, "reset should return to zero");
 	}, issues);
 
+	run("decode seek replay", () -> {
+		final handle = NativeMedia.open("res/decode-seek-replay.mp4");
+		assert(handle != null, "test video should open");
+		NativeMedia.play(handle);
+		final firstPass = decodeAllFrames(handle);
+		assert(firstPass.video > 0, "first pass should decode video frames");
+		assert(firstPass.audio > 0, "first pass should decode audio frames");
+		assert(NativeMedia.seek(handle, 0), "seek to start should succeed after EOF");
+		NativeMedia.play(handle);
+		final secondPass = decodeAllFrames(handle);
+		assert(secondPass.video == firstPass.video, "second pass should decode the same number of video frames");
+		assert(secondPass.audio == firstPass.audio, "second pass should decode the same number of audio frames");
+		NativeMedia.close(handle);
+	}, issues);
+
 	if (issues.length > 0) {
 		Sys.println("");
 		Sys.println("Failed checks: " + issues.length);
@@ -150,4 +165,31 @@ private function writePak(path:String, entryPath:String, bytes:Bytes):Void {
 private function deleteFile(path:String):Void {
 	if (sys.FileSystem.exists(path))
 		sys.FileSystem.deleteFile(path);
+}
+
+private function decodeAllFrames(handle:NativeHandle):{video:Int, audio:Int} {
+	var videoFrames = 0;
+	var audioFrames = 0;
+	var iterations = 0;
+	while (iterations++ < 100000) {
+		final result = NativeMedia.decode(handle);
+		while (true) {
+			final frame = NativeMedia.getVideoFrame(handle);
+			if (frame == null)
+				break;
+			videoFrames++;
+			NativeMedia.releaseVideoFrame(handle, frame);
+		}
+		while (true) {
+			final chunk = NativeMedia.getAudioSamples(handle, 4096);
+			if (chunk == null)
+				break;
+			audioFrames += NativeMedia.audioChunkFrames(chunk);
+			NativeMedia.releaseAudioSamples(handle, chunk);
+		}
+		if (result == 0)
+			return {video: videoFrames, audio: audioFrames};
+		assert(result > 0, "decode should not fail");
+	}
+	throw "decode did not reach EOF";
 }

@@ -48,9 +48,15 @@ class VideoTexture {
 	**/
 	public var uvTexture(default, null):Texture;
 
+	/**
+		Bytes copied to remove row padding during the latest upload.
+	**/
+	public var lastCopiedBytes(default, null) = 0;
+
 	var width = 0;
 	var height = 0;
 	var format:VideoPixelFormat;
+	var packedBuffers:Array<Bytes> = [null, null, null];
 
 	/**
 		Creates a texture set with initial 1x1 textures.
@@ -75,27 +81,28 @@ class VideoTexture {
 		Uploads decoded frame planes to GPU textures.
 	**/
 	public function upload(frame:VideoFrame):Void {
+		lastCopiedBytes = 0;
 		ensure(frame.width, frame.height, frame.format);
 
 		switch frame.format {
 			case NV12:
-				uploadPlane(yTexture, frame.y, planeWidth(frame, 0), planeHeight(frame, 0), frame.yStride, R8);
-				uploadPlane(uvTexture, frame.uv, planeWidth(frame, 1), planeHeight(frame, 1), frame.uvStride, RG8);
+				uploadPlane(yTexture, frame.y, planeWidth(frame, 0), planeHeight(frame, 0), frame.yStride, R8, 0);
+				uploadPlane(uvTexture, frame.uv, planeWidth(frame, 1), planeHeight(frame, 1), frame.uvStride, RG8, 1);
 				shader.useRGBA = false;
 				shader.useNV12 = true;
 				shader.yTexture = yTexture;
 				shader.uvTexture = uvTexture;
 			case YUV420P:
-				uploadPlane(yTexture, frame.y, planeWidth(frame, 0), planeHeight(frame, 0), frame.yStride, R8);
-				uploadPlane(uTexture, frame.u, planeWidth(frame, 1), planeHeight(frame, 1), frame.uStride, R8);
-				uploadPlane(vTexture, frame.v, planeWidth(frame, 2), planeHeight(frame, 2), frame.vStride, R8);
+				uploadPlane(yTexture, frame.y, planeWidth(frame, 0), planeHeight(frame, 0), frame.yStride, R8, 0);
+				uploadPlane(uTexture, frame.u, planeWidth(frame, 1), planeHeight(frame, 1), frame.uStride, R8, 1);
+				uploadPlane(vTexture, frame.v, planeWidth(frame, 2), planeHeight(frame, 2), frame.vStride, R8, 2);
 				shader.useRGBA = false;
 				shader.useNV12 = false;
 				shader.yTexture = yTexture;
 				shader.uTexture = uTexture;
 				shader.vTexture = vTexture;
 			case RGBA:
-				uploadPlane(output, frame.y, frame.width, frame.height, frame.yStride, RGBA);
+				uploadPlane(output, frame.y, frame.width, frame.height, frame.yStride, RGBA, 0);
 				shader.useRGBA = true;
 				shader.rgbaTexture = output;
 			case P010:
@@ -150,15 +157,21 @@ class VideoTexture {
 		shader.uvTexture = uvTexture;
 	}
 
-	private function uploadPlane(texture:Texture, source:Bytes, width:Int, height:Int, stride:Int, pixelFormat:PixelFormat):Void {
+	private function uploadPlane(texture:Texture, source:Bytes, width:Int, height:Int, stride:Int, pixelFormat:PixelFormat, plane:Int):Void {
 		if (source == null)
 			throw TextureUploadFailed("Missing video plane");
 
 		final rowSize = Pixels.calcStride(width, pixelFormat);
 		final packed = if (stride == rowSize) source else {
-			final bytes = Bytes.alloc(rowSize * height);
+			final size = rowSize * height;
+			var bytes = packedBuffers[plane];
+			if (bytes == null || bytes.length != size) {
+				bytes = Bytes.alloc(size);
+				packedBuffers[plane] = bytes;
+			}
 			for (row in 0...height)
 				bytes.blit(row * rowSize, source, row * stride, rowSize);
+			lastCopiedBytes += size;
 			bytes;
 		}
 

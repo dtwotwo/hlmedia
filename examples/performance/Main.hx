@@ -61,16 +61,20 @@ class Main extends App {
 
 		video.update(dt);
 
+		final playbackStats = video.getStats();
 		stats.text = [
 			"decode mode: " + modeName(mode),
-			"actual backend: " + video.actualDecodeBackend,
-			"pixel format: " + pixelFormatName(video.videoTexture.pixelFormat),
+			"actual backend: " + playbackStats.actualDecodeBackend,
+			"pixel format: " + pixelFormatName(playbackStats.pixelFormat),
 			"resolution: " + video.getInfo().width + "x" + video.getInfo().height,
-			"average decode ms: " + formatFloat(video.averageDecodeTimeMs),
-			"average upload ms: " + formatFloat(video.averageUploadTimeMs),
-			"dropped frames: " + video.droppedFrames,
-			"queue size: " + video.currentVideoQueueSize,
-			"CPU RGBA conversion path: " + (!preferNativePixelFormat || video.videoTexture.pixelFormat == RGBA)
+			"time: " + formatFloat(video.time) + " / " + formatFloat(video.duration),
+			"average decode ms: " + formatFloat(playbackStats.decodeMs),
+			"average upload ms: " + formatFloat(playbackStats.uploadMs),
+			"dropped frames: " + playbackStats.droppedFrames,
+			"queue size: " + playbackStats.videoQueueSize,
+			"copied bytes/s: " + formatFloat(playbackStats.copiedBytesPerSecond),
+			"audio drift ms: " + formatFloat(playbackStats.audioDriftMs),
+			"CPU RGBA conversion path: " + (!preferNativePixelFormat || playbackStats.pixelFormat == RGBA)
 		].join("\n");
 	}
 
@@ -89,7 +93,11 @@ class Main extends App {
 			loop: true,
 			videoDecodeMode: mode,
 			allowHardwareFallback: true,
-			preferNativePixelFormat: preferNativePixelFormat
+			preferNativePixelFormat: preferNativePixelFormat,
+			threadedDecode: true,
+			maxQueuedVideoFrames: 6,
+			targetAudioBufferFrames: 12000,
+			prebufferSeconds: .1
 		});
 
 		try {

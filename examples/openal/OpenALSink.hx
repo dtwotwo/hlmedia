@@ -187,6 +187,8 @@ class OpenALSink implements AudioSink {
 	private function unqueueProcessed(all:Bool):Void {
 		if (!started)
 			return;
+		if (!all && paused)
+			return;
 
 		var count = all ? AL.getSourcei(source, AL.BUFFERS_QUEUED) : AL.getSourcei(source, AL.BUFFERS_PROCESSED);
 		while (count-- > 0) {

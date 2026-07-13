@@ -102,6 +102,7 @@ See `examples/README.md` for build notes.
 - `createBitmap(s2d)` creates a `VideoBitmap` for normal Heaps 2D rendering.
 - `getTexture()` returns the current output texture for custom rendering.
 - `getInfo()` returns `VideoInfo` after opening a file.
+- `getStats()` returns a `VideoStats` performance snapshot.
 - `setVolume(value)` clamps volume to `0...1`.
 - `setLoop(enabled)` changes loop behavior after construction.
 - `setAudioSink(sink)` replaces the audio output implementation.
@@ -134,7 +135,11 @@ Player options:
 	?startPaused: Bool,
 	?videoDecodeMode: hlmedia.types.VideoDecodeMode,
 	?allowHardwareFallback: Bool,
-	?preferNativePixelFormat: Bool
+	?preferNativePixelFormat: Bool,
+	?threadedDecode: Bool,
+	?maxQueuedVideoFrames: Int,
+	?targetAudioBufferFrames: Int,
+	?prebufferSeconds: Float
 }
 ```
 
@@ -157,7 +162,11 @@ Defaults:
 {
 	videoDecodeMode: Software,
 	allowHardwareFallback: true,
-	preferNativePixelFormat: true
+	preferNativePixelFormat: true,
+	threadedDecode: false,
+	maxQueuedVideoFrames: 6,
+	targetAudioBufferFrames: 12000,
+	prebufferSeconds: 0
 }
 ```
 

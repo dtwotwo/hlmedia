@@ -33,6 +33,8 @@ typedef struct HlmediaFrame {
 	int strides[3];
 	int planeWidths[3];
 	int planeHeights[3];
+	void* owner;
+	void* pooledBuffer;
 } HlmediaFrame;
 
 typedef struct HlmediaAudioChunk {

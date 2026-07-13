@@ -1,5 +1,6 @@
 #pragma once
 
+#include "frame_buffer_pool.h"
 #include "audio_queue.h"
 #include "frame_queue.h"
 #include "media_types.h"
@@ -47,6 +48,7 @@ typedef struct MediaDecoder {
 	HlmediaVideoDecodeMode videoDecodeMode;
 	HlmediaInfo info;
 	FrameQueue videoQueue;
+	FrameBufferPool videoPool;
 	AudioQueue audioQueue;
 	char* lastError;
 } MediaDecoder;

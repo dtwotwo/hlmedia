@@ -3,4 +3,5 @@
 *.lib
 *.dll
 *.mp4
+!testMain/res/decode-seek-replay.mp4
 .haxelib

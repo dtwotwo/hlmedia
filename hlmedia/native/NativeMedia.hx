@@ -116,6 +116,16 @@ class NativeMedia {
 		return 0;
 	}
 
+	@:hlNative("hlmedia", "audio_queue_frames")
+	public static function audioQueueFrames(handle:NativeHandle):Int {
+		return 0;
+	}
+
+	@:hlNative("hlmedia", "eof")
+	public static function eof(handle:NativeHandle):Bool {
+		return false;
+	}
+
 	public static inline function hardwareDecodeBackend(handle:NativeHandle):String {
 		return @:privateAccess String.fromUTF8(_hardwareDecodeBackend(handle));
 	}

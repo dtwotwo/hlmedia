@@ -1,11 +1,15 @@
 package hlmedia;
 
 import haxe.extern.EitherType;
+import haxe.io.Bytes;
 import hxd.fs.LocalFileSystem;
 import hxd.fs.FileSystem;
 import hxd.fs.MultiFileSystem;
 import hxd.res.Any;
 import hxd.res.Resource;
+import sys.thread.Lock;
+import sys.thread.Mutex;
+import sys.thread.Thread;
 import hlmedia.audio.AudioSink;
 import hlmedia.audio.NullAudioSink;
 import hlmedia.native.NativeMedia;
@@ -13,7 +17,9 @@ import hlmedia.MediaError;
 import hlmedia.types.VideoFrame;
 import hlmedia.types.VideoPixelFormat;
 import hlmedia.types.VideoDecodeMode;
-import hlmedia.VideoInfo.VideoPlayerOptions;
+import hlmedia.types.VideoStats;
+import hlmedia.types.VideoInfo;
+import hlmedia.types.VideoPlayerOptions;
 
 /**
 	Opens, decodes, and presents one video file.
@@ -101,10 +107,24 @@ class VideoPlayer {
 	var loop = false;
 	var volume = 1.0;
 	var playbackBaseTime = 0.0;
-	var currentFrame:VideoFrame;
-	var pendingFrame:VideoFrame;
+	var pendingFrame:QueuedVideoFrame;
 	var timeCallbacks:Array<VideoTimeCallback> = [];
 	var finished = false;
+	var copiedBytesWindow = 0.0;
+	var copiedBytesWindowStart = haxe.Timer.stamp();
+	var copiedBytesPerSecond = 0.0;
+	var hasCopiedBytesRate = false;
+	var audioDriftMs = 0.0;
+	var nativeMutex = new Mutex();
+	var decodeWake = new Lock();
+	var decodeStopped:Lock;
+	var decodeThread:Thread;
+	var stopDecodeThread = false;
+	var prebuffering = false;
+	var notifyAfterPrebuffer = false;
+	var audioBufferedForDecode = 0;
+	var pendingAudioBytes:Bytes;
+	var pendingAudioFrames = 0;
 
 	/**
 		Creates a player. Use `open()` before playback.
@@ -153,8 +173,14 @@ class VideoPlayer {
 		finished = false;
 		isPaused = options.startPaused;
 		isPlaying = !isPaused;
-		if (isPlaying)
-			play();
+		if (isPlaying) {
+			NativeMedia.play(handle);
+			prebuffering = prebufferSeconds() > 0;
+			notifyAfterPrebuffer = false;
+			if (!prebuffering)
+				startPlaybackClock();
+		}
+		startDecodeThread();
 	}
 
 	/**
@@ -162,14 +188,21 @@ class VideoPlayer {
 	**/
 	public function play():Void {
 		requireOpen();
+		if (finished)
+			seek(0);
 		final wasPlaying = isPlaying;
+		lockNative();
 		NativeMedia.play(handle);
-		audioSink.pause(false);
-		clock.start(time);
+		unlockNative();
 		isPlaying = true;
 		isPaused = false;
-		if (!wasPlaying && onStart != null)
-			onStart();
+		prebuffering = prebufferSeconds() > 0 && time == 0;
+		notifyAfterPrebuffer = !wasPlaying;
+		if (prebuffering)
+			audioSink.pause(true);
+		else
+			startPlaybackClock(!wasPlaying);
+		decodeWake.release();
 	}
 
 	/**
@@ -177,7 +210,9 @@ class VideoPlayer {
 	**/
 	public function pause():Void {
 		requireOpen();
+		lockNative();
 		NativeMedia.pause(handle, true);
+		unlockNative();
 		audioSink.pause(true);
 		clock.pause();
 		isPlaying = false;
@@ -190,14 +225,20 @@ class VideoPlayer {
 	public function stop():Void {
 		if (handle == null)
 			return;
+		lockNative();
 		NativeMedia.stop(handle);
-		audioSink.stop();
+		audioBufferedForDecode = 0;
+		unlockNative();
+		audioSink.flush();
+		audioSink.pause(true);
+		clearPendingAudio();
 		clock.reset();
 		playbackBaseTime = 0;
 		time = 0;
 		isPlaying = false;
 		isPaused = false;
 		finished = false;
+		prebuffering = false;
 		resetTimeCallbacks(0);
 	}
 
@@ -206,16 +247,17 @@ class VideoPlayer {
 		reused by calling `open()` again.
 	**/
 	public function close():Void {
+		stopDecodeWorker();
+		releasePendingFrame();
 		if (handle != null) {
 			NativeMedia.close(handle);
 			handle = null;
 		}
 		audioSink.stop();
+		clearPendingAudio();
 		clock.reset();
 		playbackBaseTime = 0;
 		info = null;
-		currentFrame = null;
-		pendingFrame = null;
 		isPlaying = false;
 		isPaused = false;
 		time = 0;
@@ -227,6 +269,9 @@ class VideoPlayer {
 		currentVideoQueueSize = 0;
 		hardwareDecodeActive = false;
 		actualDecodeBackend = "Software";
+		resetStatsWindow();
+		prebuffering = false;
+		audioBufferedForDecode = 0;
 		finished = false;
 		resetTimeCallbacks(0);
 	}
@@ -247,11 +292,16 @@ class VideoPlayer {
 		requireOpen();
 		final wasPlaying = isPlaying;
 		final target = Math.max(0, Math.min(duration, seconds));
-		if (!NativeMedia.seek(handle, target))
+		releasePendingFrame();
+		lockNative();
+		if (!NativeMedia.seek(handle, target)) {
+			unlockNative();
 			throw SeekFailed(NativeMedia.lastError());
+		}
+		audioBufferedForDecode = 0;
+		unlockNative();
 		audioSink.flush();
-		currentFrame = null;
-		pendingFrame = null;
+		clearPendingAudio();
 		playbackBaseTime = target;
 		clock.seek(target);
 		time = target;
@@ -270,45 +320,87 @@ class VideoPlayer {
 		if (handle == null || !isPlaying)
 			return;
 
-		while (audioSink.getBufferedFrames() < AUDIO_TARGET_FRAMES) {
+		while (audioSink.getBufferedFrames() < targetAudioBufferFrames()) {
+			if (pendingAudioFrames > 0) {
+				if (!writePendingAudio())
+					break;
+				continue;
+			}
+			lockNative();
 			final chunk = NativeMedia.getAudioSamples(handle, AUDIO_MAX_PULL_FRAMES);
-			if (chunk == null)
+			if (chunk == null) {
+				unlockNative();
 				break;
+			}
 			final frames = NativeMedia.audioChunkFrames(chunk);
 			final bytes = NativeMedia.audioChunkBytes(chunk);
-			if (frames > 0 && bytes != null)
-				audioSink.writeFloat32Interleaved(bytes, frames);
 			NativeMedia.releaseAudioSamples(handle, chunk);
+			unlockNative();
+			if (frames > 0 && bytes != null) {
+				pendingAudioBytes = bytes;
+				pendingAudioFrames = frames;
+				if (!writePendingAudio())
+					break;
+			}
 			if (frames == 0)
 				break;
 		}
-
-		final decodeStart = haxe.Timer.stamp();
-		var decodeCalls = 0;
-		for (_ in 0...8) {
-			decodeCalls++;
-			if (NativeMedia.decode(handle) <= 0)
-				break;
+		final bufferedAudioFrames = audioSink.getBufferedFrames();
+		lockNative();
+		audioBufferedForDecode = bufferedAudioFrames + pendingAudioFrames;
+		unlockNative();
+		if (!threadedDecode()) {
+			for (_ in 0...8) {
+				final videoFull = NativeMedia.videoQueueSize(handle) >= maxQueuedVideoFrames();
+				final audioFull = !info.hasAudio
+					|| NativeMedia.audioQueueFrames(handle) + audioBufferedForDecode >= targetAudioBufferFrames();
+				if (videoFull && audioFull)
+					break;
+				final decodeStart = haxe.Timer.stamp();
+				final result = NativeMedia.decode(handle);
+				averageDecodeTimeMs = smoothAverage(averageDecodeTimeMs, (haxe.Timer.stamp() - decodeStart) * 1000);
+				if (result <= 0)
+					break;
+			}
 		}
-		if (decodeCalls > 0)
-			averageDecodeTimeMs = smoothAverage(averageDecodeTimeMs, (haxe.Timer.stamp() - decodeStart) * 1000);
+		lockNative();
 		currentVideoQueueSize = NativeMedia.videoQueueSize(handle);
+		final currentAudioQueueFrames = NativeMedia.audioQueueFrames(handle);
+		final decoderEof = NativeMedia.eof(handle);
 		hardwareDecodeActive = NativeMedia.hardwareDecodeActive(handle);
 		final hardwareBackend = NativeMedia.hardwareDecodeBackend(handle);
+		unlockNative();
 		actualDecodeBackend = hardwareBackend.length == 0 ? "Software" : hardwareBackend;
+
+		if (prebuffering) {
+			final targetVideoFrames = Math.min(maxQueuedVideoFrames(), Math.ceil(prebufferSeconds() * info.fps));
+			final audioReady = !info.hasAudio || audioSink.getBufferedFrames() >= Math.ceil(prebufferSeconds() * info.sampleRate);
+			if (currentVideoQueueSize < targetVideoFrames || !audioReady)
+				return;
+			prebuffering = false;
+			startPlaybackClock(notifyAfterPrebuffer);
+		}
 
 		final clockTime = clock.getTime();
 		if (info.hasAudio) {
 			time = playbackBaseTime + audioSink.getPlayedFrames() / info.sampleRate;
+			audioDriftMs = (time - clockTime) * 1000;
 			if (duration > 0 && clockTime >= duration && audioSink.getBufferedFrames() == 0)
 				time = duration;
 		} else {
 			time = clockTime;
+			audioDriftMs = 0;
 		}
 		dispatchTimeCallbacks(time);
 		presentFrame(time);
 
-		if (duration > 0 && time >= duration) {
+		final playbackDrained = decoderEof
+			&& currentVideoQueueSize == 0
+			&& pendingFrame == null
+			&& currentAudioQueueFrames == 0
+			&& pendingAudioFrames == 0
+			&& (!info.hasAudio || audioSink.getBufferedFrames() == 0);
+		if (duration > 0 && time >= duration || playbackDrained) {
 			if (loop)
 				seek(0);
 			else
@@ -351,7 +443,7 @@ class VideoPlayer {
 		audioSink.setVolume(volume);
 		if (info != null)
 			audioSink.start(info.sampleRate, info.channels);
-		audioSink.pause(!isPlaying);
+		audioSink.pause(!isPlaying || prebuffering);
 	}
 
 	/**
@@ -369,6 +461,26 @@ class VideoPlayer {
 	}
 
 	/**
+		Returns a snapshot of current playback and performance statistics.
+	**/
+	public function getStats():VideoStats {
+		return {
+			decodeModeRequested: decodeMode(),
+			actualDecodeBackend: actualDecodeBackend,
+			hardwareDecodeActive: hardwareDecodeActive,
+			pixelFormat: videoTexture.pixelFormat,
+			decodeMs: averageDecodeTimeMs,
+			uploadMs: averageUploadTimeMs,
+			droppedFrames: droppedFrames,
+			presentedFrames: presentedFrames,
+			videoQueueSize: currentVideoQueueSize,
+			audioBufferedFrames: info == null ? 0 : audioSink.getBufferedFrames(),
+			copiedBytesPerSecond: currentCopiedBytesRate(),
+			audioDriftMs: audioDriftMs
+		};
+	}
+
+	/**
 		Creates a Heaps bitmap bound to this player.
 	**/
 	public function createBitmap(?parent:h2d.Object, fitScene = true):VideoBitmap {
@@ -376,32 +488,54 @@ class VideoPlayer {
 	}
 
 	private function presentFrame(clockTime:Float):Void {
-		var selected:VideoFrame = null;
+		var selected:QueuedVideoFrame = null;
 		if (pendingFrame != null) {
-			if (pendingFrame.pts > clockTime + 0.025)
+			if (pendingFrame.frame.pts > clockTime + 0.025)
 				return;
 			selected = pendingFrame;
 			pendingFrame = null;
 		}
+
 		while (true) {
+			lockNative();
 			final nativeFrame = NativeMedia.getVideoFrame(handle);
-			if (nativeFrame == null)
+			if (nativeFrame == null) {
+				unlockNative();
 				break;
-			final frame = readFrame(nativeFrame);
-			NativeMedia.releaseVideoFrame(handle, nativeFrame);
-			if (frame.pts <= clockTime + 0.025) {
-				if (selected != null)
+			}
+
+			final queuedFrame = readFrame(nativeFrame);
+			unlockNative();
+			if (queuedFrame.frame.pts <= clockTime + 0.025) {
+				if (selected != null) {
+					lockNative();
+					NativeMedia.releaseVideoFrame(handle, selected.nativeFrame);
+					unlockNative();
 					droppedFrames++;
-				selected = frame;
+				}
+				selected = queuedFrame;
 			} else {
-				pendingFrame = frame;
+				pendingFrame = queuedFrame;
 				break;
 			}
 		}
+
 		if (selected != null) {
-			currentFrame = selected;
 			final uploadStart = haxe.Timer.stamp();
-			videoTexture.upload(selected);
+			try {
+				videoTexture.upload(selected.frame);
+			} catch (error) {
+				lockNative();
+				NativeMedia.releaseVideoFrame(handle, selected.nativeFrame);
+				unlockNative();
+				throw error;
+			}
+
+			lockNative();
+			NativeMedia.releaseVideoFrame(handle, selected.nativeFrame);
+			unlockNative();
+
+			copiedBytesWindow += videoTexture.lastCopiedBytes;
 			averageUploadTimeMs = smoothAverage(averageUploadTimeMs, (haxe.Timer.stamp() - uploadStart) * 1000);
 			presentedFrames++;
 		}
@@ -418,7 +552,9 @@ class VideoPlayer {
 		isPlaying = false;
 		isPaused = false;
 		time = duration;
+		lockNative();
 		NativeMedia.pause(handle, true);
+		unlockNative();
 		audioSink.pause(true);
 		clock.pause();
 		if (onFinish != null)
@@ -439,31 +575,146 @@ class VideoPlayer {
 			item.fired = item.time < time;
 	}
 
-	private function readFrame(frame:NativeFrame):VideoFrame {
+	private function readFrame(frame:NativeFrame):QueuedVideoFrame {
 		final format = NativeMedia.frameFormat(frame);
 		return {
-			pts: NativeMedia.framePts(frame),
-			width: NativeMedia.frameWidth(frame),
-			height: NativeMedia.frameHeight(frame),
-			format: format,
-			planeCount: NativeMedia.framePlaneCount(frame),
-			y: NativeMedia.framePlane(frame, 0),
-			u: format == YUV420P ? NativeMedia.framePlane(frame, 1) : null,
-			v: format == YUV420P ? NativeMedia.framePlane(frame, 2) : null,
-			uv: format == NV12 ? NativeMedia.framePlane(frame, 1) : null,
-			yStride: NativeMedia.frameStride(frame, 0),
-			uStride: NativeMedia.frameStride(frame, 1),
-			vStride: NativeMedia.frameStride(frame, 2),
-			uvStride: NativeMedia.frameStride(frame, 1),
-			planeWidths: [
-				for (i in 0...NativeMedia.framePlaneCount(frame))
-					NativeMedia.framePlaneWidth(frame, i)
-			],
-			planeHeights: [
-				for (i in 0...NativeMedia.framePlaneCount(frame))
-					NativeMedia.framePlaneHeight(frame, i)
-			]
+			nativeFrame: frame,
+			frame: {
+				pts: NativeMedia.framePts(frame),
+				width: NativeMedia.frameWidth(frame),
+				height: NativeMedia.frameHeight(frame),
+				format: format,
+				planeCount: NativeMedia.framePlaneCount(frame),
+				y: NativeMedia.framePlane(frame, 0),
+				u: format == YUV420P ? NativeMedia.framePlane(frame, 1) : null,
+				v: format == YUV420P ? NativeMedia.framePlane(frame, 2) : null,
+				uv: format == NV12 ? NativeMedia.framePlane(frame, 1) : null,
+				yStride: NativeMedia.frameStride(frame, 0),
+				uStride: NativeMedia.frameStride(frame, 1),
+				vStride: NativeMedia.frameStride(frame, 2),
+				uvStride: NativeMedia.frameStride(frame, 1),
+				planeWidths: [
+					for (i in 0...NativeMedia.framePlaneCount(frame))
+						NativeMedia.framePlaneWidth(frame, i)
+				],
+				planeHeights: [
+					for (i in 0...NativeMedia.framePlaneCount(frame))
+						NativeMedia.framePlaneHeight(frame, i)
+				]
+			}
 		};
+	}
+
+	private function releasePendingFrame():Void {
+		if (pendingFrame == null)
+			return;
+		lockNative();
+		NativeMedia.releaseVideoFrame(handle, pendingFrame.nativeFrame);
+		unlockNative();
+		pendingFrame = null;
+	}
+
+	private function writePendingAudio():Bool {
+		final acceptedFrames = audioSink.writeFloat32Interleaved(pendingAudioBytes, pendingAudioFrames);
+		if (acceptedFrames <= 0)
+			return false;
+		if (acceptedFrames >= pendingAudioFrames) {
+			clearPendingAudio();
+			return true;
+		}
+
+		final byteOffset = acceptedFrames * info.channels * 4;
+		pendingAudioBytes = pendingAudioBytes.sub(byteOffset, pendingAudioBytes.length - byteOffset);
+		pendingAudioFrames -= acceptedFrames;
+		return true;
+	}
+
+	private function clearPendingAudio():Void {
+		pendingAudioBytes = null;
+		pendingAudioFrames = 0;
+	}
+
+	private function startDecodeThread():Void {
+		if (!threadedDecode())
+			return;
+		stopDecodeThread = false;
+		decodeStopped = new Lock();
+
+		final hasAudio = info.hasAudio;
+		final videoTarget = maxQueuedVideoFrames();
+		final audioTarget = targetAudioBufferFrames();
+		decodeThread = Thread.create(() -> {
+			while (true) {
+				nativeMutex.acquire();
+				if (stopDecodeThread) {
+					nativeMutex.release();
+					break;
+				}
+				final videoFull = NativeMedia.videoQueueSize(handle) >= videoTarget;
+				final audioFull = !hasAudio || NativeMedia.audioQueueFrames(handle) + audioBufferedForDecode >= audioTarget;
+				if (videoFull && audioFull) {
+					nativeMutex.release();
+					decodeWake.wait(.005);
+					continue;
+				}
+				final decodeStart = haxe.Timer.stamp();
+				final result = NativeMedia.decode(handle);
+				averageDecodeTimeMs = smoothAverage(averageDecodeTimeMs, (haxe.Timer.stamp() - decodeStart) * 1000);
+				nativeMutex.release();
+				if (result <= 0)
+					decodeWake.wait(.01);
+			}
+			decodeStopped.release();
+		});
+	}
+
+	private function stopDecodeWorker():Void {
+		if (decodeThread == null)
+			return;
+		nativeMutex.acquire();
+		stopDecodeThread = true;
+		nativeMutex.release();
+		decodeWake.release();
+		decodeStopped.wait();
+		decodeThread = null;
+		decodeStopped = null;
+	}
+
+	private function startPlaybackClock(notify = false):Void {
+		audioSink.pause(false);
+		clock.start(time);
+		if (notify && onStart != null)
+			onStart();
+	}
+
+	private inline function lockNative():Void {
+		if (decodeThread != null)
+			nativeMutex.acquire();
+	}
+
+	private inline function unlockNative():Void {
+		if (decodeThread != null)
+			nativeMutex.release();
+	}
+
+	private function currentCopiedBytesRate():Float {
+		final now = haxe.Timer.stamp();
+		final elapsed = now - copiedBytesWindowStart;
+		if (elapsed >= 1) {
+			copiedBytesPerSecond = copiedBytesWindow / elapsed;
+			copiedBytesWindow = 0;
+			copiedBytesWindowStart = now;
+			hasCopiedBytesRate = true;
+		}
+		return hasCopiedBytesRate || elapsed <= 0 ? copiedBytesPerSecond : copiedBytesWindow / elapsed;
+	}
+
+	private function resetStatsWindow():Void {
+		copiedBytesWindow = 0;
+		copiedBytesWindowStart = haxe.Timer.stamp();
+		copiedBytesPerSecond = 0;
+		hasCopiedBytesRate = false;
+		audioDriftMs = 0;
 	}
 
 	private function decodeMode():VideoDecodeMode {
@@ -476,6 +727,22 @@ class VideoPlayer {
 
 	private function preferNativePixelFormat():Bool {
 		return options.preferNativePixelFormat ?? true;
+	}
+
+	private function threadedDecode():Bool {
+		return options.threadedDecode ?? false;
+	}
+
+	private function maxQueuedVideoFrames():Int {
+		return Std.int(Math.max(1, options.maxQueuedVideoFrames ?? 6));
+	}
+
+	private function targetAudioBufferFrames():Int {
+		return Std.int(Math.max(1, options.targetAudioBufferFrames ?? AUDIO_TARGET_FRAMES));
+	}
+
+	private function prebufferSeconds():Float {
+		return Math.max(0, options.prebufferSeconds ?? 0);
 	}
 
 	private function requireOpen():Void {
@@ -523,4 +790,9 @@ private typedef VideoTimeCallback = {
 	final time:Float;
 	final callback:Void->Void;
 	var fired:Bool;
+}
+
+private typedef QueuedVideoFrame = {
+	final nativeFrame:NativeFrame;
+	final frame:VideoFrame;
 }

@@ -65,6 +65,7 @@ MediaDecoder* media_decoder_create(void) {
 	decoder->info.sampleRate = 48000;
 	decoder->info.channels = 2;
 	frame_queue_init(&decoder->videoQueue);
+	frame_buffer_pool_init(&decoder->videoPool);
 	audio_queue_init(&decoder->audioQueue);
 	return decoder;
 }
@@ -187,6 +188,7 @@ static bool media_decoder_open_format(MediaDecoder* decoder) {
 
 void media_decoder_close(MediaDecoder* decoder) {
 	media_decoder_flush_queues(decoder);
+	frame_buffer_pool_dispose(&decoder->videoPool);
 	if (decoder->swsContext != NULL) {
 		sws_freeContext(decoder->swsContext);
 		decoder->swsContext = NULL;
@@ -431,6 +433,10 @@ int media_decoder_decode(MediaDecoder* decoder) {
 			avcodec_send_packet(decoder->videoCodecContext, NULL);
 			media_decoder_receive_video_frames(decoder);
 		}
+		if (decoder->audioCodecContext != NULL) {
+			avcodec_send_packet(decoder->audioCodecContext, NULL);
+			media_decoder_receive_audio_frames(decoder);
+		}
 		return 0;
 	}
 
@@ -559,10 +565,16 @@ static bool media_decoder_queue_native_video_frame(MediaDecoder* decoder, AVFram
 		return false;
 	}
 
+	AVFrame* retainedFrame = av_frame_clone(frame);
+	if (retainedFrame == NULL) {
+		media_decoder_set_error(decoder, "Failed to retain video frame");
+		return false;
+	}
+	out.owner = retainedFrame;
 	for (int plane = 0; plane < planeCount; ++plane) {
 		const int rowBytes = planeWidths[plane] * planeBytesPerPixel[plane];
-		const int stride = frame->linesize[plane];
-		if (frame->data[plane] == NULL || rowBytes <= 0 || planeHeights[plane] <= 0 || stride < rowBytes) {
+		const int stride = retainedFrame->linesize[plane];
+		if (retainedFrame->data[plane] == NULL || rowBytes <= 0 || planeHeights[plane] <= 0 || stride < rowBytes) {
 			hlmedia_frame_free(&out);
 			media_decoder_set_error(decoder, "Invalid video frame plane");
 			return false;
@@ -576,14 +588,7 @@ static bool media_decoder_queue_native_video_frame(MediaDecoder* decoder, AVFram
 		out.planeWidths[plane] = planeWidths[plane];
 		out.planeHeights[plane] = planeHeights[plane];
 		out.planeSizes[plane] = (size_t)stride * (size_t)planeHeights[plane];
-		out.planes[plane] = (uint8_t*)malloc(out.planeSizes[plane]);
-		if (out.planes[plane] == NULL) {
-			hlmedia_frame_free(&out);
-			media_decoder_set_error(decoder, "Failed to allocate video frame");
-			return false;
-		}
-		for (int row = 0; row < planeHeights[plane]; ++row)
-			memcpy(out.planes[plane] + (size_t)row * (size_t)stride, frame->data[plane] + (size_t)row * (size_t)frame->linesize[plane], (size_t)rowBytes);
+		out.planes[plane] = retainedFrame->data[plane];
 	}
 
 	if (!frame_queue_push(&decoder->videoQueue, &out)) {
@@ -613,11 +618,13 @@ static bool media_decoder_queue_rgba_frame(MediaDecoder* decoder, AVFrame* frame
 		return false;
 	}
 	out.planeSizes[0] = (size_t)out.strides[0] * (size_t)out.height;
-	out.planes[0] = (uint8_t*)malloc(out.planeSizes[0]);
-	if (out.planes[0] == NULL) {
+	FrameBuffer* buffer = acquire_frame_buffer(&decoder->videoPool, out.width, out.height, out.format, out.planeSizes[0]);
+	if (buffer == NULL) {
 		media_decoder_set_error(decoder, "Failed to allocate video frame");
 		return false;
 	}
+	out.pooledBuffer = buffer;
+	out.planes[0] = buffer->data;
 
 	decoder->swsContext = sws_getCachedContext(decoder->swsContext, frame->width, frame->height, (enum AVPixelFormat)frame->format, frame->width, frame->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
 	if (decoder->swsContext == NULL) {
@@ -828,6 +835,27 @@ const char* media_decoder_get_last_error(const MediaDecoder* decoder) {
 void hlmedia_frame_free(HlmediaFrame* frame) {
 	if (frame == NULL)
 		return;
+
+	if (frame->owner != NULL) {
+		AVFrame* owner = (AVFrame*)frame->owner;
+		av_frame_free(&owner);
+		frame->owner = NULL;
+		for (int i = 0; i < 3; ++i) {
+			frame->planes[i] = NULL;
+			frame->planeSizes[i] = 0;
+		}
+		return;
+	}
+
+	if (frame->pooledBuffer != NULL) {
+		release_frame_buffer((FrameBuffer*)frame->pooledBuffer);
+		frame->pooledBuffer = NULL;
+		for (int i = 0; i < 3; ++i) {
+			frame->planes[i] = NULL;
+			frame->planeSizes[i] = 0;
+		}
+		return;
+	}
 
 	for (int i = 0; i < 3; ++i) {
 		free(frame->planes[i]);

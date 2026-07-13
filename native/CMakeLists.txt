@@ -17,6 +17,7 @@ endif()
 add_library(extension SHARED
 	src/hlmedia.c
 	src/media_decoder.c
+	src/frame_buffer_pool.c
 	src/frame_queue.c
 	src/audio_queue.c
 )

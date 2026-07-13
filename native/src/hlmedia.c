@@ -136,6 +136,14 @@ HL_PRIM int HL_NAME(video_queue_size)(MediaDecoder* decoder) {
 	return decoder == NULL ? 0 : (int)frame_queue_size(&decoder->videoQueue);
 }
 
+HL_PRIM int HL_NAME(audio_queue_frames)(MediaDecoder* decoder) {
+	return decoder == NULL ? 0 : audio_queue_frame_count(&decoder->audioQueue);
+}
+
+HL_PRIM bool HL_NAME(eof)(MediaDecoder* decoder) {
+	return decoder != NULL && decoder->eof;
+}
+
 HL_PRIM int HL_NAME(sample_rate)(MediaDecoder* decoder) {
 	return decoder == NULL ? 48000 : media_decoder_get_info(decoder)->sampleRate;
 }
@@ -219,7 +227,7 @@ HL_PRIM int HL_NAME(frame_plane_size)(HlmediaFrame* frame, int plane) {
 HL_PRIM vbyte* HL_NAME(frame_plane)(HlmediaFrame* frame, int plane) {
 	if (frame == NULL || plane < 0 || plane > 2 || frame->planeSizes[plane] == 0 || !size_fits_hl_bytes(frame->planeSizes[plane]))
 		return NULL;
-	return hl_copy_bytes((const vbyte*)frame->planes[plane], (int)frame->planeSizes[plane]);
+	return (vbyte*)frame->planes[plane];
 }
 
 HL_PRIM HlmediaAudioChunk* HL_NAME(get_audio_samples)(MediaDecoder* decoder, int maxFrames) {
@@ -265,6 +273,8 @@ DEFINE_PRIM(_F64, fps, _DECODER);
 DEFINE_PRIM(_BOOL, has_audio, _DECODER);
 DEFINE_PRIM(_BOOL, hardware_decode_active, _DECODER);
 DEFINE_PRIM(_I32, video_queue_size, _DECODER);
+DEFINE_PRIM(_I32, audio_queue_frames, _DECODER);
+DEFINE_PRIM(_BOOL, eof, _DECODER);
 DEFINE_PRIM(_I32, sample_rate, _DECODER);
 DEFINE_PRIM(_I32, channels, _DECODER);
 DEFINE_PRIM(_BYTES, video_codec, _DECODER);
