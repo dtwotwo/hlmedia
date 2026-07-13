@@ -5,3 +5,4 @@ out
 dist
 native-libs
 *.zip
+*.tar.xz

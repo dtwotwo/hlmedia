@@ -1,13 +1,44 @@
 {
-	"version": 3,
+	"version": 6,
 	"configurePresets": [
 		{
-			"name": "release",
+			"name": "windows-base",
+			"hidden": true,
 			"generator": "Visual Studio 18 2026",
-			"binaryDir": "${sourceDir}/out/build/${presetName}",
+			"architecture": "x64",
 			"cacheVariables": {
 				"CMAKE_CONFIGURATION_TYPES": "Release"
 			}
+		},
+		{
+			"name": "windows-shared",
+			"inherits": "windows-base",
+			"binaryDir": "${sourceDir}/out/build/windows-shared",
+			"cacheVariables": {
+				"HLMEDIA_DISTRIBUTION": "SHARED",
+				"HLMEDIA_FFMPEG_LINKAGE": "SHARED"
+			}
+		},
+		{
+			"name": "windows-game-static",
+			"inherits": "windows-base",
+			"binaryDir": "${sourceDir}/out/build/windows-game-static",
+			"cacheVariables": {
+				"HLMEDIA_DISTRIBUTION": "GAME",
+				"HLMEDIA_FFMPEG_LINKAGE": "STATIC"
+			}
+		}
+	],
+	"buildPresets": [
+		{
+			"name": "windows-shared",
+			"configurePreset": "windows-shared",
+			"configuration": "Release"
+		},
+		{
+			"name": "windows-game-static",
+			"configurePreset": "windows-game-static",
+			"configuration": "Release"
 		}
 	]
 }

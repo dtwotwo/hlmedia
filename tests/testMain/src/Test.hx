@@ -2,6 +2,7 @@ import haxe.io.Bytes;
 import hxd.fmt.pak.Data;
 import hxd.fmt.pak.Writer;
 import hlmedia.MediaClock;
+import hlmedia.MediaBuild;
 import hlmedia.native.NativeMedia;
 import hlmedia.types.VideoDecodeMode;
 import hlmedia.types.VideoPixelFormat;
@@ -9,6 +10,19 @@ import hlmedia.types.VideoPixelFormat;
 private function main() {
 	var failed = false;
 	final issues:Array<String> = [];
+	final expectedDistribution = Sys.getEnv("HLMEDIA_EXPECTED_DISTRIBUTION");
+	final mediaPath = expectedDistribution == "GAME" ? "res/decode-seek-replay-h264.mp4" : "res/decode-seek-replay.mp4";
+
+	run("build information", () -> {
+		final info = MediaBuild.getInfo();
+		assert(info.distribution == "SHARED" || info.distribution == "GAME", "distribution should be recognized");
+		if (expectedDistribution != null)
+			assert(info.distribution == expectedDistribution, "distribution should match the tested package");
+		assert(info.staticFFmpeg == (info.distribution == "GAME"), "FFmpeg linkage should match distribution");
+		assert(info.ffmpegVersion.length > 0, "FFmpeg version should be reported");
+		assert(info.ffmpegConfiguration.length > 0, "FFmpeg configuration should be reported");
+		assert(info.ffmpegLicense.indexOf("LGPL") >= 0, "FFmpeg should report an LGPL license");
+	}, issues);
 
 	run("invalid open", () -> {
 		final handle = NativeMedia.open("__missing__/missing.mp4");
@@ -84,8 +98,8 @@ private function main() {
 	}, issues);
 
 	run("decode seek replay", () -> {
-		final handle = NativeMedia.open("res/decode-seek-replay.mp4");
-		assert(handle != null, "test video should open");
+		final handle = NativeMedia.open(mediaPath);
+		assert(handle != null, "test video should open: " + NativeMedia.lastError());
 		NativeMedia.play(handle);
 		final firstPass = decodeAllFrames(handle);
 		assert(firstPass.video > 0, "first pass should decode video frames");
@@ -95,6 +109,14 @@ private function main() {
 		final secondPass = decodeAllFrames(handle);
 		assert(secondPass.video == firstPass.video, "second pass should decode the same number of video frames");
 		assert(secondPass.audio == firstPass.audio, "second pass should decode the same number of audio frames");
+		NativeMedia.close(handle);
+	}, issues);
+
+	run("hardware fallback", () -> {
+		final handle = NativeMedia.open(mediaPath, HardwareAuto, true, true);
+		assert(handle != null, "media should open when hardware decoding may fall back to software: " + NativeMedia.lastError());
+		NativeMedia.play(handle);
+		assert(NativeMedia.decode(handle) >= 0, "hardware initialization or software fallback should not fail");
 		NativeMedia.close(handle);
 	}, issues);
 
@@ -116,8 +138,7 @@ private function run(label:String, test:Void->Void, issues:Array<String>):Void {
 	try {
 		test();
 		Sys.println("OK " + label);
-	}
-	catch (e) {
+	} catch (e) {
 		final message = label + ": " + Std.string(e);
 		issues.push(message);
 		Sys.println("FAIL " + message);
@@ -154,8 +175,7 @@ private function writePak(path:String, entryPath:String, bytes:Bytes):Void {
 	final output = sys.io.File.write(path, true);
 	try {
 		new Writer(output).write(pak, bytes);
-	}
-	catch (e) {
+	} catch (e) {
 		output.close();
 		throw e;
 	}

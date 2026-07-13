@@ -2,6 +2,7 @@ package hlmedia.native;
 
 import haxe.io.Bytes;
 import hlmedia.types.VideoDecodeMode;
+import hlmedia.types.MediaBuildInfo;
 import hlmedia.types.VideoPixelFormat;
 
 private typedef NativeHandleData = hl.Abstract<"hlmedia_decoder">;
@@ -20,6 +21,41 @@ abstract NativeAudioChunk(NativeAudioChunkData) from NativeAudioChunkData to Nat
 @:hlNative("hlmedia")
 @:noDoc
 class NativeMedia {
+	public static function buildInfo():MediaBuildInfo {
+		return {
+			distribution: @:privateAccess String.fromUTF8(_buildDistribution()),
+			staticFFmpeg: _buildFFmpegStatic(),
+			ffmpegVersion: @:privateAccess String.fromUTF8(_buildFFmpegVersion()),
+			ffmpegConfiguration: @:privateAccess String.fromUTF8(_buildFFmpegConfiguration()),
+			ffmpegLicense: @:privateAccess String.fromUTF8(_buildFFmpegLicense())
+		};
+	}
+
+	@:hlNative("hlmedia", "build_distribution")
+	static function _buildDistribution():hl.Bytes {
+		return null;
+	}
+
+	@:hlNative("hlmedia", "build_ffmpeg_static")
+	static function _buildFFmpegStatic():Bool {
+		return false;
+	}
+
+	@:hlNative("hlmedia", "build_ffmpeg_version")
+	static function _buildFFmpegVersion():hl.Bytes {
+		return null;
+	}
+
+	@:hlNative("hlmedia", "build_ffmpeg_configuration")
+	static function _buildFFmpegConfiguration():hl.Bytes {
+		return null;
+	}
+
+	@:hlNative("hlmedia", "build_ffmpeg_license")
+	static function _buildFFmpegLicense():hl.Bytes {
+		return null;
+	}
+
 	public static inline function open(path:String, decodeMode:VideoDecodeMode = Software, allowHardwareFallback = true, preferNativePixelFormat = true):NativeHandle {
 		final bytes = haxe.io.Bytes.alloc(path.length + 1);
 		bytes.blit(0, haxe.io.Bytes.ofString(path), 0, path.length);

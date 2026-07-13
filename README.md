@@ -92,6 +92,9 @@ See `examples/README.md` for build notes.
 
 `hlmedia.VideoPlayer` is the main class.
 
+`hlmedia.MediaBuild.getInfo()` reports the selected distribution, FFmpeg
+linkage, version, configuration, and license.
+
 - `new(?options)` creates a player.
 - `open(pathOrResource)` opens a local file path or `hxd.res.Resource`.
 - `play()`, `pause()`, and `stop()` control playback.
@@ -173,6 +176,29 @@ Defaults:
 Pixel formats exposed by native frames are in `hlmedia.types.VideoPixelFormat`:
 `RGBA`, `YUV420P`, `NV12`, and `P010`. `P010` is reserved for future support.
 
+## Windows distributions
+
+Both archives expose the same Haxe/native API and contain `hlmedia.hdll`. Choose
+one runtime variant; do not deploy both together.
+
+### Shared distribution
+
+`hlmedia-windows-shared-x64.zip` is the standard, flexible build. It uses the
+broad LGPL shared FFmpeg SDK and contains `hlmedia.hdll`, the required FFmpeg
+DLLs, licenses, and build information. Use it when broad codec/container
+support matters and deploying FFmpeg DLLs is acceptable.
+
+### Game static distribution
+
+`hlmedia-windows-game-static-x64.zip` statically links a compact LGPL-only
+FFmpeg build into `hlmedia.hdll`. It contains no FFmpeg DLLs and supports only
+local MP4/MOV playback with H.264 video and AAC audio. It includes licenses,
+the pinned FFmpeg commit, the exact configure command, and build information.
+
+The corresponding FFmpeg source package can be generated locally with
+`deps/ffmpeg/create-source-package.sh` when compliance or relinking materials
+are required.
+
 ## Build native library
 
 Requirements:
@@ -186,25 +212,44 @@ Requirements:
   - `swresample`
   - `swscale`
 
-Build with an FFmpeg root directory:
+Download shared dependencies and build the shared distribution:
 
 ```powershell
-cmake -S . -B out/build/default -DFFMPEG_ROOT=C:/ffmpeg
-cmake --build out/build/default --config Release
+./scripts/ci/download-hashlink.ps1
+./scripts/ci/download-ffmpeg-shared.ps1
+cmake --preset windows-shared -DFFMPEG_ROOT="$env:FFMPEG_SHARED_ROOT"
+cmake --build --preset windows-shared
+./scripts/ci/stage-package.ps1 -Variant shared -Preset windows-shared `
+  -OutputDirectory dist/hlmedia-windows-shared-x64
+./scripts/ci/verify-package.ps1 -Variant shared `
+  -Directory dist/hlmedia-windows-shared-x64
 ```
 
-Or pass include and library directories separately:
+Build the pinned compact FFmpeg SDK from an x64 MSVC-enabled MSYS2 shell:
+
+```bash
+export FFMPEG_SOURCE="$PWD/out/deps/ffmpeg-source"
+export FFMPEG_BUILD_DIR="$PWD/out/deps/ffmpeg-game-build"
+export FFMPEG_INSTALL_DIR="$PWD/out/deps/ffmpeg-game-static"
+bash ./deps/ffmpeg/build-game-static.sh
+```
+
+Then build and package hlmedia from PowerShell:
 
 ```powershell
-cmake -S . -B out/build/default `
-  -DFFMPEG_INCLUDE_DIR=C:/ffmpeg/include `
-  -DFFMPEG_LIBRARY_DIR=C:/ffmpeg/lib
-cmake --build out/build/default --config Release
+$env:FFMPEG_GAME_STATIC_ROOT = "$pwd/out/deps/ffmpeg-game-static"
+cmake --preset windows-game-static -DFFMPEG_ROOT="$env:FFMPEG_GAME_STATIC_ROOT"
+cmake --build --preset windows-game-static
+./scripts/ci/stage-package.ps1 -Variant game-static -Preset windows-game-static `
+  -OutputDirectory dist/hlmedia-windows-game-static-x64
+./scripts/ci/verify-package.ps1 -Variant game-static `
+  -Directory dist/hlmedia-windows-game-static-x64
 ```
 
-The native output is copied to `native-libs/hlmedia.hdll`.
+Set `HASHLINK` to the HashLink SDK root before configuring. Both FFmpeg SDKs use
+the `include/` and `lib/` layout under `FFMPEG_ROOT`.
 
-## Runtime files
+## Shared runtime files
 
 Place these files next to your HashLink executable, or make them available on
 `PATH`:
@@ -216,32 +261,32 @@ Place these files next to your HashLink executable, or make them available on
 - `swresample-*.dll`
 - `swscale-*.dll`
 
-The examples keep shared runtime files in `examples/`. Each example build runs
-`examples/copy-runtime.ps1`, which copies the current `native-libs` runtime files
-beside that example's `.hl` output.
+Each example build runs `examples/copy-runtime.ps1`, which copies runtime files
+from the staged shared package by default. Pass `-Source` to use another staged
+runtime package.
 
 Release packages should also include:
 
 - `LICENSE`
 - `LICENSE_FFMPEG.md`
 
-The GitHub workflow publishes these files in the `hlmedia-windows` artifact.
+The GitHub workflow publishes them in `hlmedia-windows-shared-x64.zip`.
 
 ## CMake options
 
 - `HLMEDIA_WITH_LIBYUV=ON/OFF`
-- `HLMEDIA_BUILD_SHARED=ON`
+- `HLMEDIA_DISTRIBUTION=SHARED/GAME`
+- `HLMEDIA_FFMPEG_LINKAGE=SHARED/STATIC`
 
 ## FFmpeg license
 
 `hlmedia` is MIT licensed. Release packages include shared FFmpeg DLLs, which
 keep their own license terms.
 
-The default workflow uses the BtbN LGPL shared FFmpeg build and copies the DLLs
-next to `hlmedia.hdll`. Keep `LICENSE_FFMPEG.md` in every package that ships
-FFmpeg DLLs, and check the exact FFmpeg build before distributing it.
-
-Static FFmpeg linking is not supported.
+The shared distribution uses the BtbN LGPL shared FFmpeg build. The game-static
+distribution disables GPL, nonfree, version 3, and external codec libraries.
+See `LICENSE_FFMPEG.md` and the locally generated source package for compliance
+details.
 
 ## Video assets
 

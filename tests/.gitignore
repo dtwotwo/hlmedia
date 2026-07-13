@@ -4,4 +4,5 @@
 *.dll
 *.mp4
 !testMain/res/decode-seek-replay.mp4
+!testMain/res/decode-seek-replay-h264.mp4
 .haxelib

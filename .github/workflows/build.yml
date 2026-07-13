@@ -3,25 +3,33 @@ name: Build
 on:
   workflow_dispatch:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
-  release:
-    types:
-      - published
 
 permissions:
   contents: write
 
-env:
-  FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip
-
 jobs:
   build:
-    name: Build native
+    name: Build and test ${{ matrix.variant }}
     runs-on: windows-2025-vs2026
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: shared
+            preset: windows-shared
+            package: hlmedia-windows-shared-x64
+          - variant: game-static
+            preset: windows-game-static
+            package: hlmedia-windows-game-static-x64
 
     steps:
-      - name: Checkout
+      - name: Checkout hlmedia
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up MSVC
         uses: vln-devsecops/actions-msvc@release/v1
@@ -30,192 +38,146 @@ jobs:
 
       - name: Download HashLink
         shell: pwsh
-        run: |
-          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/HaxeFoundation/hashlink/releases/latest'
-          $asset = $release.assets | Where-Object { $_.name -like 'hashlink-*-win.zip' } | Select-Object -First 1
-          if (-not $asset) {
-            throw 'Could not find a Windows HashLink release asset.'
-          }
-
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile 'hashlink-win.zip'
-          Expand-Archive -LiteralPath 'hashlink-win.zip' -DestinationPath 'hashlink' -Force
-
-          $hashlinkDir = Get-ChildItem -Path 'hashlink' -Directory | Select-Object -First 1
-          if (-not $hashlinkDir) {
-            throw 'Could not locate the extracted HashLink directory.'
-          }
-
-          "HASHLINK=$($hashlinkDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "$($hashlinkDir.FullName)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        run: ./scripts/ci/download-hashlink.ps1
 
       - name: Download FFmpeg LGPL shared SDK
+        if: matrix.variant == 'shared'
+        shell: pwsh
+        run: ./scripts/ci/download-ffmpeg-shared.ps1
+
+      - name: Set up MSYS2
+        if: matrix.variant == 'game-static'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          install: make diffutils patch tar xz
+
+      - name: Read pinned FFmpeg revision
+        if: matrix.variant == 'game-static'
+        id: ffmpeg
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path 'out/deps' | Out-Null
-          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile 'out/deps/ffmpeg-shared.zip'
-          Expand-Archive -LiteralPath 'out/deps/ffmpeg-shared.zip' -DestinationPath 'out/deps' -Force
+          $commit = ((Get-Content deps/ffmpeg/VERSION -Raw).Trim() -split '\s+')[0]
+          "commit=$commit" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-          $ffmpegDir = Get-ChildItem -Path 'out/deps' -Directory |
-            Where-Object { (Test-Path (Join-Path $_.FullName 'include/libavcodec/avcodec.h')) -and (Test-Path (Join-Path $_.FullName 'lib/avcodec.lib')) } |
-            Select-Object -First 1
+      - name: Restore static FFmpeg SDK
+        if: matrix.variant == 'game-static'
+        id: ffmpeg-cache
+        uses: actions/cache@v5
+        with:
+          path: out/deps/ffmpeg-game-static
+          key: ${{ runner.os }}-x64-vs2026-ffmpeg-${{ steps.ffmpeg.outputs.commit }}-${{ hashFiles('deps/ffmpeg/build-game-static.sh', 'deps/ffmpeg/patches/**') }}
 
-          if (-not $ffmpegDir) {
-            throw 'Could not locate extracted FFmpeg LGPL shared SDK include/lib directories.'
-          }
+      - name: Validate cached static FFmpeg SDK
+        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $actual = (Get-Content out/deps/ffmpeg-game-static/build-info/FFMPEG-COMMIT.txt -Raw).Trim()
+          if ($actual -ne '${{ steps.ffmpeg.outputs.commit }}') { throw "Cached FFmpeg commit $actual does not match the pin." }
 
-          "FFMPEG_ROOT=$($ffmpegDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Checkout pinned FFmpeg source
+        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git init out/deps/ffmpeg-source
+          git -C out/deps/ffmpeg-source remote add origin https://github.com/FFmpeg/FFmpeg.git
+          git -C out/deps/ffmpeg-source fetch --depth 1 origin ${{ steps.ffmpeg.outputs.commit }}
+          git -C out/deps/ffmpeg-source checkout --detach FETCH_HEAD
+
+      - name: Build static FFmpeg SDK
+        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        env:
+          FFMPEG_SOURCE: ${{ github.workspace }}/out/deps/ffmpeg-source
+          FFMPEG_BUILD_DIR: ${{ github.workspace }}/out/deps/ffmpeg-game-build
+          FFMPEG_INSTALL_DIR: ${{ github.workspace }}/out/deps/ffmpeg-game-static
+        run: bash ./deps/ffmpeg/build-game-static.sh
+
+      - name: Export FFmpeg SDK root
+        if: matrix.variant == 'game-static'
+        shell: pwsh
+        run: |
+          "FFMPEG_GAME_STATIC_ROOT=${{ github.workspace }}/out/deps/ffmpeg-game-static" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure CMake
         shell: pwsh
-        run: cmake --preset release -DFFMPEG_ROOT="$env:FFMPEG_ROOT"
-
-      - name: Build release
-        run: cmake --build out/build/release --config Release
-
-      - name: Stage native build
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path 'dist/native' | Out-Null
+          $root = if ('${{ matrix.variant }}' -eq 'shared') { $env:FFMPEG_SHARED_ROOT } else { $env:FFMPEG_GAME_STATIC_ROOT }
+          cmake --preset ${{ matrix.preset }} -DFFMPEG_ROOT="$root"
 
-          Copy-Item 'out/build/release/native/Release/hlmedia.hdll' 'dist/native/hlmedia.hdll' -Force
-          Copy-Item 'out/build/release/native/Release/hlmedia.lib' 'dist/native/hlmedia.lib' -Force
+      - name: Build hlmedia
+        run: cmake --build --preset ${{ matrix.preset }}
 
-          foreach ($dll in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll', 'swresample-*.dll', 'swscale-*.dll')) {
-            Copy-Item "$env:FFMPEG_ROOT/bin/$dll" 'dist/native' -Force
-          }
+      - name: Stage package
+        shell: pwsh
+        run: ./scripts/ci/stage-package.ps1 -Variant ${{ matrix.variant }} -Preset ${{ matrix.preset }} -OutputDirectory dist/${{ matrix.package }}
 
-      - name: Save native build
-        uses: actions/cache/save@v5.0.5
-        with:
-          path: dist/native
-          key: ${{ runner.os }}-hlmedia-native-${{ github.run_id }}-${{ github.run_attempt }}
-
-  test:
-    name: Test Haxe ${{ matrix.haxe-version }}
-    needs: build
-    runs-on: windows-2025-vs2026
-
-    strategy:
-      fail-fast: false
-      matrix:
-        haxe-version: ["4.3.7", "latest"]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Verify package dependencies
+        shell: pwsh
+        run: ./scripts/ci/verify-package.ps1 -Variant ${{ matrix.variant }} -Directory dist/${{ matrix.package }}
 
       - name: Set up Haxe
         uses: krdlab/setup-haxe@master
         with:
-          haxe-version: ${{ matrix.haxe-version }}
+          haxe-version: latest
 
       - name: Install Haxe libraries
         run: haxelib install heaps --quiet --always
 
-      - name: Download HashLink
+      - name: Run Haxe/native tests
         shell: pwsh
+        env:
+          HLMEDIA_EXPECTED_DISTRIBUTION: ${{ matrix.variant == 'shared' && 'SHARED' || 'GAME' }}
         run: |
-          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/HaxeFoundation/hashlink/releases/latest'
-          $asset = $release.assets | Where-Object { $_.name -like 'hashlink-*-win.zip' } | Select-Object -First 1
-          if (-not $asset) {
-            throw 'Could not find a Windows HashLink release asset.'
-          }
-
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile 'hashlink-win.zip'
-          Expand-Archive -LiteralPath 'hashlink-win.zip' -DestinationPath 'hashlink' -Force
-
-          $hashlinkDir = Get-ChildItem -Path 'hashlink' -Directory | Select-Object -First 1
-          if (-not $hashlinkDir) {
-            throw 'Could not locate the extracted HashLink directory.'
-          }
-
-          "HASHLINK=$($hashlinkDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "$($hashlinkDir.FullName)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Restore native build
-        uses: actions/cache/restore@v5.0.5
-        with:
-          path: dist/native
-          key: ${{ runner.os }}-hlmedia-native-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Stage test native files
-        shell: pwsh
-        run: Copy-Item 'dist/native/*' 'tests/testMain/' -Force
-
-      - name: Compile HL tests
-        working-directory: tests/testMain
-        run: |
-          haxe --version
+          Copy-Item "dist/${{ matrix.package }}/*" tests/testMain -Force
+          Push-Location tests/testMain
           haxe test-hl.hxml
-
-      - name: Run HL tests
-        working-directory: tests/testMain
-        run: |
-          hl --version
           hl test.hl
+          Pop-Location
 
-  package:
-    name: Package release
-    needs: test
-    runs-on: windows-2025-vs2026
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Restore native build
-        uses: actions/cache/restore@v5.0.5
-        with:
-          path: dist/native
-          key: ${{ runner.os }}-hlmedia-native-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Stage license files
-        shell: pwsh
-        run: Copy-Item 'LICENSE*' 'dist/native/' -Force
-
-      - name: Verify packaged files
-        shell: pwsh
-        run: |
-          if (-not (Test-Path 'dist/native/hlmedia.hdll')) {
-            throw 'Missing dist/native/hlmedia.hdll'
-          }
-          if (-not (Test-Path 'dist/native/hlmedia.lib')) {
-            throw 'Missing dist/native/hlmedia.lib'
-          }
-          foreach ($dll in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll', 'swresample-*.dll', 'swscale-*.dll')) {
-            if (-not (Get-ChildItem -Path 'dist/native' -File -Filter $dll)) {
-              throw "Missing dist/native/$dll"
-            }
-          }
-          if (-not (Get-ChildItem -Path 'dist/native' -File -Filter 'LICENSE*')) {
-            throw 'Missing dist/native/LICENSE*'
-          }
-
-      - name: Create release zip
-        shell: pwsh
-        run: |
-          if (Test-Path 'hlmedia-windows.zip') {
-            Remove-Item 'hlmedia-windows.zip' -Force
-          }
-          Compress-Archive -Path 'dist/native/*' -DestinationPath 'hlmedia-windows.zip'
-
-      - name: Upload artifact
+      - name: Upload runtime package
         uses: actions/upload-artifact@v7
         with:
-          name: hlmedia-windows
-          path: hlmedia-windows.zip
+          name: ${{ matrix.package }}
+          path: dist/${{ matrix.package }}
 
-      - name: Update nightly release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: andelf/nightly-release@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    name: Publish release assets
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: windows-2025-vs2026
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
         with:
-          tag_name: nightly
-          name: Nightly Release
-          body: |
-            Automated nightly Windows build of `hlmedia`.
+          path: artifacts
 
-            Download `hlmedia-windows.zip` and extract it where you want to keep the native files.
-          files: |
-            hlmedia-windows.zip
+      - name: Create runtime archives
+        shell: pwsh
+        run: |
+          foreach ($name in 'hlmedia-windows-shared-x64', 'hlmedia-windows-game-static-x64') {
+            Compress-Archive -Path "artifacts/$name" -DestinationPath "$name.zip" -CompressionLevel Optimal
+          }
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$env:GITHUB_REF_NAME" *> $null
+          if ($LASTEXITCODE) { gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --generate-notes }
+          gh release upload "$env:GITHUB_REF_NAME" hlmedia-windows-shared-x64.zip hlmedia-windows-game-static-x64.zip --clobber
+
+      - name: Publish nightly release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view nightly *> $null
+          if ($LASTEXITCODE) { gh release create nightly --prerelease --title "Nightly Release" --notes "Automated build from main." }
+          gh release upload nightly hlmedia-windows-shared-x64.zip hlmedia-windows-game-static-x64.zip --clobber

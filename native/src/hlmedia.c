@@ -1,11 +1,32 @@
 #include "hlmedia.h"
 #include "media_decoder.h"
 
+#include <libavutil/avutil.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
 static char* globalLastError;
+
+const char* hlmedia_get_distribution(void) {
+	return HLMEDIA_DISTRIBUTION;
+}
+
+bool hlmedia_is_ffmpeg_static(void) {
+	return HLMEDIA_FFMPEG_STATIC != 0;
+}
+
+const char* hlmedia_get_ffmpeg_version(void) {
+	return av_version_info();
+}
+
+const char* hlmedia_get_ffmpeg_configuration(void) {
+	return avutil_configuration();
+}
+
+const char* hlmedia_get_ffmpeg_license(void) {
+	return avutil_license();
+}
 
 static bool size_fits_hl_bytes(size_t size) {
 	return size <= INT_MAX;
@@ -176,6 +197,26 @@ HL_PRIM vbyte* HL_NAME(last_error)() {
 	return copy_string(globalLastError);
 }
 
+HL_PRIM vbyte* HL_NAME(build_distribution)() {
+	return copy_string(hlmedia_get_distribution());
+}
+
+HL_PRIM bool HL_NAME(build_ffmpeg_static)() {
+	return hlmedia_is_ffmpeg_static();
+}
+
+HL_PRIM vbyte* HL_NAME(build_ffmpeg_version)() {
+	return copy_string(hlmedia_get_ffmpeg_version());
+}
+
+HL_PRIM vbyte* HL_NAME(build_ffmpeg_configuration)() {
+	return copy_string(hlmedia_get_ffmpeg_configuration());
+}
+
+HL_PRIM vbyte* HL_NAME(build_ffmpeg_license)() {
+	return copy_string(hlmedia_get_ffmpeg_license());
+}
+
 HL_PRIM HlmediaFrame* HL_NAME(get_video_frame)(MediaDecoder* decoder) {
 	return decoder == NULL ? NULL : media_decoder_take_video_frame(decoder);
 }
@@ -281,6 +322,11 @@ DEFINE_PRIM(_BYTES, video_codec, _DECODER);
 DEFINE_PRIM(_BYTES, audio_codec, _DECODER);
 DEFINE_PRIM(_BYTES, hardware_decode_backend, _DECODER);
 DEFINE_PRIM(_BYTES, last_error, _NO_ARG);
+DEFINE_PRIM(_BYTES, build_distribution, _NO_ARG);
+DEFINE_PRIM(_BOOL, build_ffmpeg_static, _NO_ARG);
+DEFINE_PRIM(_BYTES, build_ffmpeg_version, _NO_ARG);
+DEFINE_PRIM(_BYTES, build_ffmpeg_configuration, _NO_ARG);
+DEFINE_PRIM(_BYTES, build_ffmpeg_license, _NO_ARG);
 DEFINE_PRIM(_FRAME, get_video_frame, _DECODER);
 DEFINE_PRIM(_VOID, release_video_frame, _DECODER _FRAME);
 DEFINE_PRIM(_F64, frame_pts, _FRAME);

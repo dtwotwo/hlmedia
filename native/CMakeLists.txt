@@ -1,18 +1,28 @@
 option(HLMEDIA_WITH_LIBYUV "Enable optional libyuv support" OFF)
-option(HLMEDIA_BUILD_SHARED "Build hlmedia as a shared HashLink extension" ON)
 
-set(FFMPEG_ROOT "" CACHE PATH "FFmpeg root directory")
-set(FFMPEG_INCLUDE_DIR "" CACHE PATH "FFmpeg include directory")
-set(FFMPEG_LIBRARY_DIR "" CACHE PATH "FFmpeg library directory")
+set(HLMEDIA_DISTRIBUTION "SHARED" CACHE STRING "hlmedia distribution profile: SHARED or GAME")
+set_property(CACHE HLMEDIA_DISTRIBUTION PROPERTY STRINGS SHARED GAME)
 
-if(FFMPEG_ROOT)
-	set(FFMPEG_INCLUDE_DIR "${FFMPEG_ROOT}/include" CACHE PATH "" FORCE)
-	set(FFMPEG_LIBRARY_DIR "${FFMPEG_ROOT}/lib" CACHE PATH "" FORCE)
+set(HLMEDIA_FFMPEG_LINKAGE "SHARED" CACHE STRING "FFmpeg linkage mode: SHARED or STATIC")
+set_property(CACHE HLMEDIA_FFMPEG_LINKAGE PROPERTY STRINGS SHARED STATIC)
+
+if(NOT HLMEDIA_DISTRIBUTION MATCHES "^(SHARED|GAME)$")
+	message(FATAL_ERROR "Unsupported HLMEDIA_DISTRIBUTION '${HLMEDIA_DISTRIBUTION}'; expected SHARED or GAME")
 endif()
 
-if(NOT FFMPEG_INCLUDE_DIR OR NOT FFMPEG_LIBRARY_DIR)
-	message(FATAL_ERROR "Set FFMPEG_ROOT or both FFMPEG_INCLUDE_DIR and FFMPEG_LIBRARY_DIR")
+if(NOT HLMEDIA_FFMPEG_LINKAGE MATCHES "^(SHARED|STATIC)$")
+	message(FATAL_ERROR "Unsupported HLMEDIA_FFMPEG_LINKAGE '${HLMEDIA_FFMPEG_LINKAGE}'; expected SHARED or STATIC")
 endif()
+
+if(HLMEDIA_DISTRIBUTION STREQUAL "SHARED" AND NOT HLMEDIA_FFMPEG_LINKAGE STREQUAL "SHARED")
+	message(FATAL_ERROR "Distribution SHARED requires FFmpeg linkage SHARED")
+elseif(HLMEDIA_DISTRIBUTION STREQUAL "GAME" AND NOT HLMEDIA_FFMPEG_LINKAGE STREQUAL "STATIC")
+	message(FATAL_ERROR "Distribution GAME requires FFmpeg linkage STATIC")
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(FFmpeg)
+hlmedia_find_ffmpeg("${HLMEDIA_FFMPEG_LINKAGE}")
 
 add_library(extension SHARED
 	src/hlmedia.c
@@ -27,50 +37,43 @@ set_target_properties(extension PROPERTIES
 	SUFFIX ".hdll"
 )
 
-target_include_directories(extension PRIVATE
-	include
-	"${FFMPEG_INCLUDE_DIR}"
+target_include_directories(extension PRIVATE include)
+target_compile_definitions(extension PRIVATE
+	HLMEDIA_DISTRIBUTION="${HLMEDIA_DISTRIBUTION}"
+)
+
+if(HLMEDIA_FFMPEG_LINKAGE STREQUAL "STATIC")
+	target_compile_definitions(extension PRIVATE HLMEDIA_FFMPEG_STATIC=1)
+else()
+	target_compile_definitions(extension PRIVATE HLMEDIA_FFMPEG_STATIC=0)
+endif()
+
+target_link_libraries(extension PRIVATE
+	FFmpeg::avformat
+	FFmpeg::avcodec
+	FFmpeg::avutil
+	FFmpeg::swresample
+	FFmpeg::swscale
 )
 
 if(WIN32)
+	if("$ENV{HASHLINK}" STREQUAL "")
+		message(FATAL_ERROR "Set HASHLINK to the HashLink SDK root")
+	endif()
 	target_include_directories(extension PRIVATE "$ENV{HASHLINK}/include")
-	target_link_directories(extension PRIVATE "$ENV{HASHLINK}" "${FFMPEG_LIBRARY_DIR}")
-	target_link_libraries(extension PRIVATE
-		"$ENV{HASHLINK}/libhl.lib"
-		avformat
-		avcodec
-		avutil
-		swresample
-		swscale
-	)
-else()
-	target_link_directories(extension PRIVATE "${FFMPEG_LIBRARY_DIR}")
-	target_link_libraries(extension PRIVATE avformat avcodec avutil swresample swscale)
+	target_link_libraries(extension PRIVATE "$ENV{HASHLINK}/libhl.lib")
+
+	if(HLMEDIA_FFMPEG_LINKAGE STREQUAL "STATIC")
+		target_link_libraries(extension PRIVATE bcrypt d3d11 d3d12 dxgi dxguid dxva2 ole32 user32)
+	endif()
 endif()
 
 if(MSVC)
 	target_compile_options(extension PRIVATE /wd4244 /wd4267 /wd4996)
 endif()
 
-set(HLMEDIA_HDLL_DIR "${CMAKE_SOURCE_DIR}/native-libs")
-
-add_custom_command(TARGET extension POST_BUILD
-	COMMAND "${CMAKE_COMMAND}" -E make_directory "${HLMEDIA_HDLL_DIR}"
-	COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:extension>" "${HLMEDIA_HDLL_DIR}/$<TARGET_FILE_NAME:extension>"
+install(TARGETS extension
+	RUNTIME DESTINATION .
+	LIBRARY DESTINATION .
+	ARCHIVE DESTINATION dev
 )
-
-if(WIN32)
-	get_filename_component(FFMPEG_BIN_DIR "${FFMPEG_LIBRARY_DIR}/../bin" ABSOLUTE)
-	file(GLOB HLMEDIA_FFMPEG_DLLS CONFIGURE_DEPENDS
-		"${FFMPEG_BIN_DIR}/avcodec-*.dll"
-		"${FFMPEG_BIN_DIR}/avformat-*.dll"
-		"${FFMPEG_BIN_DIR}/avutil-*.dll"
-		"${FFMPEG_BIN_DIR}/swresample-*.dll"
-		"${FFMPEG_BIN_DIR}/swscale-*.dll"
-	)
-	if(HLMEDIA_FFMPEG_DLLS)
-		add_custom_command(TARGET extension POST_BUILD
-			COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${HLMEDIA_FFMPEG_DLLS} "${HLMEDIA_HDLL_DIR}"
-		)
-	endif()
-endif()
