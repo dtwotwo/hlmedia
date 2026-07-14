@@ -78,6 +78,13 @@ configure_flags=(
 	--enable-parser=aac
 	--enable-demuxer=mov
 	--enable-protocol=file
+	--enable-d3d11va
+	--enable-dxva2
+	--enable-d3d12va
+	--enable-hwaccel=h264_d3d11va2
+	--enable-hwaccel=h264_d3d11va
+	--enable-hwaccel=h264_dxva2
+	--enable-hwaccel=h264_d3d12va
 	"${extra_hwaccel_flags[@]}"
 )
 
