@@ -172,12 +172,47 @@ jobs:
           if ($LASTEXITCODE) { gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --generate-notes }
           gh release upload "$env:GITHUB_REF_NAME" hlmedia-windows-shared-x64.zip hlmedia-windows-game-static-x64.zip --clobber
 
-      - name: Publish nightly release
+      - name: Update nightly release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view nightly *> $null
-          if ($LASTEXITCODE) { gh release create nightly --prerelease --title "Nightly Release" --notes "Automated build from main." }
-          gh release upload nightly hlmedia-windows-shared-x64.zip hlmedia-windows-game-static-x64.zip --clobber
+          $tag = 'nightly'
+          $assets = @(
+            'hlmedia-windows-shared-x64.zip',
+            'hlmedia-windows-game-static-x64.zip'
+          )
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if (-not $releaseExists) {
+            gh release create $tag @assets `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA `
+              --prerelease `
+              --title 'Nightly Release' `
+              --notes 'Automated build from main.'
+
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Failed to create the nightly release.'
+            }
+            exit 0
+          }
+
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$tag" `
+            -f sha=$env:GITHUB_SHA `
+            -F force=true
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to move the nightly tag.'
+          }
+
+          gh release upload $tag @assets `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to replace the nightly assets.'
+          }
