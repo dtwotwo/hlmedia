@@ -27,6 +27,26 @@
 				"HLMEDIA_DISTRIBUTION": "GAME",
 				"HLMEDIA_FFMPEG_LINKAGE": "STATIC"
 			}
+		},
+		{
+			"name": "linux-shared",
+			"generator": "Ninja",
+			"binaryDir": "${sourceDir}/out/build/linux-shared",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release",
+				"HLMEDIA_DISTRIBUTION": "SHARED",
+				"HLMEDIA_FFMPEG_LINKAGE": "SHARED"
+			}
+		},
+		{
+			"name": "linux-game-static",
+			"generator": "Ninja",
+			"binaryDir": "${sourceDir}/out/build/linux-game-static",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release",
+				"HLMEDIA_DISTRIBUTION": "GAME",
+				"HLMEDIA_FFMPEG_LINKAGE": "STATIC"
+			}
 		}
 	],
 	"buildPresets": [
@@ -39,6 +59,14 @@
 			"name": "windows-game-static",
 			"configurePreset": "windows-game-static",
 			"configuration": "Release"
+		},
+		{
+			"name": "linux-shared",
+			"configurePreset": "linux-shared"
+		},
+		{
+			"name": "linux-game-static",
+			"configurePreset": "linux-game-static"
 		}
 	]
 }

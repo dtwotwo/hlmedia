@@ -16,3 +16,14 @@ dumpbin /DEPENDENTS dist/game-static/hlmedia.hdll
 The final command must not list avcodec, avformat, avutil, swresample, or
 swscale DLLs. The included commit, configure command, generated configuration,
 and changes diff identify the exact LGPL-covered build.
+
+On Linux, install `pkg-config`, `libva-dev`, and `libdrm-dev`, set the
+same three environment variables, and run `build-game-static-linux.sh`. Then:
+
+```sh
+cmake --preset linux-game-static -DFFMPEG_ROOT=/path/to/ffmpeg-install
+cmake --build --preset linux-game-static
+ldd out/build/linux-game-static/native/hlmedia.hdll
+```
+
+The final command must not list shared FFmpeg libraries.

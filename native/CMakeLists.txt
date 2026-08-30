@@ -22,6 +22,7 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(FFmpeg)
+include(HashLink)
 hlmedia_find_ffmpeg("${HLMEDIA_FFMPEG_LINKAGE}")
 
 add_library(extension SHARED
@@ -34,6 +35,7 @@ add_library(extension SHARED
 
 set_target_properties(extension PROPERTIES
 	OUTPUT_NAME "hlmedia"
+	PREFIX ""
 	SUFFIX ".hdll"
 )
 
@@ -49,20 +51,15 @@ else()
 endif()
 
 target_link_libraries(extension PRIVATE
+	HashLink::HashLink
 	FFmpeg::avformat
 	FFmpeg::avcodec
-	FFmpeg::avutil
 	FFmpeg::swresample
 	FFmpeg::swscale
+	FFmpeg::avutil
 )
 
 if(WIN32)
-	if("$ENV{HASHLINK}" STREQUAL "")
-		message(FATAL_ERROR "Set HASHLINK to the HashLink SDK root")
-	endif()
-	target_include_directories(extension PRIVATE "$ENV{HASHLINK}/include")
-	target_link_libraries(extension PRIVATE "$ENV{HASHLINK}/libhl.lib")
-
 	if(HLMEDIA_FFMPEG_LINKAGE STREQUAL "STATIC")
 		target_link_libraries(extension PRIVATE bcrypt d3d11 d3d12 dxgi dxguid dxva2 ole32 user32)
 	endif()

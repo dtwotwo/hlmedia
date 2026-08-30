@@ -16,6 +16,7 @@ trap 'rm -rf "$staging"' EXIT
 mkdir -p "$staging/ffmpeg-source"
 git -C "$FFMPEG_SOURCE" archive HEAD | tar -x -C "$staging/ffmpeg-source"
 cp "$script_dir/build-game-static.sh" "$staging/build-game-static.sh"
+cp "$script_dir/build-game-static-linux.sh" "$staging/build-game-static-linux.sh"
 cp "$build_info/FFMPEG-COMMIT.txt" "$staging/FFMPEG-COMMIT.txt"
 cp "$build_info/FFMPEG-CONFIGURE.txt" "$staging/FFMPEG-CONFIGURE.txt"
 cp "$build_info/changes.diff" "$staging/changes.diff"
@@ -31,6 +32,6 @@ if [[ -s "$build_info/changes.diff" ]]; then
 fi
 
 tar -C "$staging" -I 'xz -T0' -cf "$output" \
-	ffmpeg-source build-game-static.sh FFMPEG-COMMIT.txt FFMPEG-CONFIGURE.txt \
+	ffmpeg-source build-game-static.sh build-game-static-linux.sh FFMPEG-COMMIT.txt FFMPEG-CONFIGURE.txt \
 	changes.diff config.h config_components.h config.mak BUILDING.md \
 	COPYING.LGPLv2.1 LICENSE.md

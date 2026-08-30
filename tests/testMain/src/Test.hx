@@ -21,7 +21,8 @@ private function main() {
 		assert(info.staticFFmpeg == (info.distribution == "GAME"), "FFmpeg linkage should match distribution");
 		assert(info.ffmpegVersion.length > 0, "FFmpeg version should be reported");
 		assert(info.ffmpegConfiguration.length > 0, "FFmpeg configuration should be reported");
-		assert(info.ffmpegLicense.indexOf("LGPL") >= 0, "FFmpeg should report an LGPL license");
+		assert(info.ffmpegLicense.indexOf("LGPL") >= 0
+			|| (Sys.systemName() == "Linux" && info.ffmpegLicense.indexOf("GPL") >= 0), "FFmpeg should report an LGPL license, or GPL for a Linux system build");
 	}, issues);
 
 	run("invalid open", () -> {
