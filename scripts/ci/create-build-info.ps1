@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-	[Parameter(Mandatory)][ValidateSet("shared", "game-static")][string]$Variant,
+	[Parameter(Mandatory)][ValidateSet("shared", "game")][string]$Variant,
 	[Parameter(Mandatory)][string]$OutputPath,
 	[string]$FFmpegRoot
 )
@@ -18,7 +18,7 @@ if (Test-Path $versionHeader) {
 	$versionMatch = [regex]::Match((Get-Content $versionHeader -Raw), '#define\s+FFMPEG_VERSION\s+"([^"]+)"')
 	if ($versionMatch.Success) { $ffmpegVersion = $versionMatch.Groups[1].Value }
 }
-if ($Variant -eq "game-static" -and (Test-Path "deps/ffmpeg/VERSION")) {
+if ($Variant -eq "game" -and (Test-Path "deps/ffmpeg/VERSION")) {
 	$pinParts = (Get-Content "deps/ffmpeg/VERSION" -Raw).Trim() -split "#", 2
 	if ($pinParts.Count -eq 2) { $ffmpegVersion = $pinParts[1].Trim() }
 }
@@ -27,7 +27,7 @@ $runUrl = if ($env:GITHUB_SERVER_URL -and $env:GITHUB_REPOSITORY -and $env:GITHU
 	"$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
 } else { "local" }
 $compiler = "MSVC"
-$preset = if ($Variant -eq "shared") { "windows-shared" } else { "windows-game-static" }
+$preset = if ($Variant -eq "shared") { "windows" } else { "game" }
 $compilerFile = Get-ChildItem "out/build/$preset" -Filter CMakeCCompiler.cmake -File -Recurse | Select-Object -First 1
 if ($compilerFile) {
 	$compilerMatch = [regex]::Match((Get-Content $compilerFile.FullName -Raw), 'CMAKE_C_COMPILER_VERSION "([^"]+)"')

@@ -7,9 +7,9 @@ Open an x64 MSVC developer shell, then enter MSYS2 with `make`, `git`, `tar`, an
 In PowerShell, set `HASHLINK` to a HashLink SDK and relink hlmedia:
 
 ```powershell
-cmake --preset windows-game-static -DFFMPEG_ROOT="C:/path/to/ffmpeg-install"
-cmake --build --preset windows-game-static
-cmake --install out/build/windows-game-static --config Release --prefix dist/game-static
+cmake --preset game -DFFMPEG_ROOT="C:/path/to/ffmpeg-install"
+cmake --build --preset game
+cmake --install out/build/game --config Release --prefix dist/game-static
 dumpbin /DEPENDENTS dist/game-static/hlmedia.hdll
 ```
 

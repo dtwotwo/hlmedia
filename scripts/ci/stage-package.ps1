@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-	[Parameter(Mandatory)][ValidateSet("shared", "game-static")][string]$Variant,
+	[Parameter(Mandatory)][ValidateSet("shared", "game")][string]$Variant,
 	[Parameter(Mandatory)][string]$Preset,
 	[Parameter(Mandatory)][string]$OutputDirectory
 )

@@ -182,14 +182,14 @@ one runtime variant; do not deploy both together.
 
 ### Shared distribution
 
-`hlmedia-windows-shared-x64.zip` is the standard, flexible build. It uses the
+`hlmedia-windows.zip` is the standard, flexible build. It uses the
 broad LGPL shared FFmpeg SDK and contains `hlmedia.hdll`, the required FFmpeg
 DLLs, licenses, and build information. Use it when broad codec/container
 support matters and deploying FFmpeg DLLs is acceptable.
 
 ### Game static distribution
 
-`hlmedia-windows-game-static-x64.zip` statically links a compact LGPL-only
+`hlmedia-windows-game.zip` statically links a compact LGPL-only
 FFmpeg build into `hlmedia.hdll`. It contains no FFmpeg DLLs and supports only
 local MP4/MOV playback with H.264 video and AAC audio. It includes licenses,
 the pinned FFmpeg commit, the exact configure command, and build information.
@@ -216,12 +216,12 @@ Download shared dependencies and build the shared distribution:
 ```powershell
 ./scripts/ci/download-hashlink.ps1
 ./scripts/ci/download-ffmpeg-shared.ps1
-cmake --preset windows-shared -DFFMPEG_ROOT="$env:FFMPEG_SHARED_ROOT"
-cmake --build --preset windows-shared
-./scripts/ci/stage-package.ps1 -Variant shared -Preset windows-shared `
-  -OutputDirectory dist/hlmedia-windows-shared-x64
+cmake --preset windows -DFFMPEG_ROOT="$env:FFMPEG_SHARED_ROOT"
+cmake --build --preset windows
+./scripts/ci/stage-package.ps1 -Variant shared -Preset windows `
+  -OutputDirectory dist/hlmedia-windows
 ./scripts/ci/verify-package.ps1 -Variant shared `
-  -Directory dist/hlmedia-windows-shared-x64
+  -Directory dist/hlmedia-windows
 ```
 
 Build the pinned compact FFmpeg SDK from an x64 MSVC-enabled MSYS2 shell:
@@ -237,12 +237,12 @@ Then build and package hlmedia from PowerShell:
 
 ```powershell
 $env:FFMPEG_GAME_STATIC_ROOT = "$pwd/out/deps/ffmpeg-game-static"
-cmake --preset windows-game-static -DFFMPEG_ROOT="$env:FFMPEG_GAME_STATIC_ROOT"
-cmake --build --preset windows-game-static
-./scripts/ci/stage-package.ps1 -Variant game-static -Preset windows-game-static `
-  -OutputDirectory dist/hlmedia-windows-game-static-x64
-./scripts/ci/verify-package.ps1 -Variant game-static `
-  -Directory dist/hlmedia-windows-game-static-x64
+cmake --preset game -DFFMPEG_ROOT="$env:FFMPEG_GAME_STATIC_ROOT"
+cmake --build --preset game
+./scripts/ci/stage-package.ps1 -Variant game -Preset game `
+  -OutputDirectory dist/hlmedia-windows-game
+./scripts/ci/verify-package.ps1 -Variant game `
+  -Directory dist/hlmedia-windows-game
 ```
 
 Set `HASHLINK` to the HashLink SDK root before configuring. Both FFmpeg SDKs use
@@ -269,7 +269,7 @@ Release packages should also include:
 - `LICENSE`
 - `LICENSE_FFMPEG.md`
 
-The GitHub workflow publishes them in `hlmedia-windows-shared-x64.zip`.
+The GitHub workflow publishes them in `hlmedia-windows.zip` and `hlmedia-windows-game.zip`.
 
 ## CMake options
 

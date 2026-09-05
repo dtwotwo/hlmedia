@@ -7,13 +7,13 @@ exact license reported by each binary is available through
 
 ## Shared distribution
 
-`hlmedia-windows-shared-x64.zip` contains an LGPL-compatible shared FFmpeg SDK.
+`hlmedia-windows.zip` and `hlmedia-linux.tar.gz` contain an LGPL-compatible shared FFmpeg SDK.
 The FFmpeg DLLs remain separately replaceable. `BUILD_INFO.txt` identifies the
 SDK used for the release.
 
 ## Game static distribution
 
-`hlmedia-windows-game-static-x64.zip` statically links the pinned minimal FFmpeg
+`hlmedia-windows-game.zip` statically links the pinned minimal FFmpeg
 build. Its configuration explicitly disables GPL, nonfree, and version 3 code,
 and does not enable libx264, libx265, or other external codec libraries. The
 archive includes `FFMPEG-COMMIT.txt`, `FFMPEG-CONFIGURE.txt`,

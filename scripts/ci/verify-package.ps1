@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-	[Parameter(Mandatory)][ValidateSet("shared", "game-static")][string]$Variant,
+	[Parameter(Mandatory)][ValidateSet("shared", "game")][string]$Variant,
 	[Parameter(Mandatory)][string]$Directory
 )
 
@@ -13,7 +13,7 @@ Write-Output $dependencies
 $ffmpegPattern = "(?im)^\s*(avcodec|avformat|avutil|swresample|swscale)-[^\s]+\.dll\s*$"
 $packagedFFmpeg = Get-ChildItem $Directory -File | Where-Object Name -Match "^(avcodec|avformat|avutil|swresample|swscale)-.*\.dll$"
 
-if ($Variant -eq "game-static") {
+if ($Variant -eq "game") {
 	if ($dependencies -match $ffmpegPattern) { throw "Static package depends on FFmpeg DLLs." }
 	if ($packagedFFmpeg) { throw "Static package contains FFmpeg DLLs." }
 	foreach ($name in "FFMPEG-COMMIT.txt", "FFMPEG-CONFIGURE.txt", "COPYING.LGPLv2.1", "LICENSE.md") {

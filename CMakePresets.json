@@ -11,18 +11,18 @@
 			}
 		},
 		{
-			"name": "windows-shared",
+			"name": "windows",
 			"inherits": "windows-base",
-			"binaryDir": "${sourceDir}/out/build/windows-shared",
+			"binaryDir": "${sourceDir}/out/build/windows",
 			"cacheVariables": {
 				"HLMEDIA_DISTRIBUTION": "SHARED",
 				"HLMEDIA_FFMPEG_LINKAGE": "SHARED"
 			}
 		},
 		{
-			"name": "windows-game-static",
+			"name": "game",
 			"inherits": "windows-base",
-			"binaryDir": "${sourceDir}/out/build/windows-game-static",
+			"binaryDir": "${sourceDir}/out/build/game",
 			"cacheVariables": {
 				"HLMEDIA_DISTRIBUTION": "GAME",
 				"HLMEDIA_FFMPEG_LINKAGE": "STATIC"
@@ -41,13 +41,13 @@
 	],
 	"buildPresets": [
 		{
-			"name": "windows-shared",
-			"configurePreset": "windows-shared",
+			"name": "windows",
+			"configurePreset": "windows",
 			"configuration": "Release"
 		},
 		{
-			"name": "windows-game-static",
-			"configurePreset": "windows-game-static",
+			"name": "game",
+			"configurePreset": "game",
 			"configuration": "Release"
 		},
 		{

@@ -3,7 +3,7 @@ param(
 	[string]$Source
 )
 
-$defaultSource = Join-Path (Split-Path -Parent $PSScriptRoot) "dist/hlmedia-windows-shared-x64"
+$defaultSource = Join-Path (Split-Path -Parent $PSScriptRoot) "dist/hlmedia-windows"
 $source = if ($Source) { Resolve-Path -LiteralPath $Source } elseif (Test-Path -LiteralPath $defaultSource) { $defaultSource } else { $PSScriptRoot }
 $target = Resolve-Path -LiteralPath $Destination
 

@@ -85,11 +85,11 @@ jobs:
       matrix:
         include:
           - variant: shared
-            preset: windows-shared
-            package: hlmedia-windows-shared-x64
-          - variant: game-static
-            preset: windows-game-static
-            package: hlmedia-windows-game-static-x64
+            preset: windows
+            package: hlmedia-windows
+          - variant: game
+            preset: game
+            package: hlmedia-windows-game
 
     steps:
       - name: Checkout hlmedia
@@ -112,7 +112,7 @@ jobs:
         run: ./scripts/ci/download-ffmpeg-shared.ps1
 
       - name: Set up MSYS2
-        if: matrix.variant == 'game-static'
+        if: matrix.variant == 'game'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MSYS
@@ -120,7 +120,7 @@ jobs:
           install: make diffutils patch tar xz
 
       - name: Read pinned FFmpeg revision
-        if: matrix.variant == 'game-static'
+        if: matrix.variant == 'game'
         id: ffmpeg
         shell: pwsh
         run: |
@@ -128,7 +128,7 @@ jobs:
           "commit=$commit" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Restore static FFmpeg SDK
-        if: matrix.variant == 'game-static'
+        if: matrix.variant == 'game'
         id: ffmpeg-cache
         uses: actions/cache@v5
         with:
@@ -136,14 +136,14 @@ jobs:
           key: ${{ runner.os }}-x64-vs2026-ffmpeg-${{ steps.ffmpeg.outputs.commit }}-${{ hashFiles('deps/ffmpeg/build-game-static.sh', 'deps/ffmpeg/patches/**') }}
 
       - name: Validate cached static FFmpeg SDK
-        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit == 'true'
+        if: matrix.variant == 'game' && steps.ffmpeg-cache.outputs.cache-hit == 'true'
         shell: pwsh
         run: |
           $actual = (Get-Content out/deps/ffmpeg-game-static/build-info/FFMPEG-COMMIT.txt -Raw).Trim()
           if ($actual -ne '${{ steps.ffmpeg.outputs.commit }}') { throw "Cached FFmpeg commit $actual does not match the pin." }
 
       - name: Checkout pinned FFmpeg source
-        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: matrix.variant == 'game' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           git init out/deps/ffmpeg-source
@@ -152,7 +152,7 @@ jobs:
           git -C out/deps/ffmpeg-source checkout --detach FETCH_HEAD
 
       - name: Build static FFmpeg SDK
-        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: matrix.variant == 'game' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         env:
           FFMPEG_SOURCE: ${{ github.workspace }}/out/deps/ffmpeg-source
@@ -161,7 +161,7 @@ jobs:
         run: bash ./deps/ffmpeg/build-game-static.sh
 
       - name: Export FFmpeg SDK root
-        if: matrix.variant == 'game-static'
+        if: matrix.variant == 'game'
         shell: pwsh
         run: |
           "FFMPEG_GAME_STATIC_ROOT=${{ github.workspace }}/out/deps/ffmpeg-game-static" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
@@ -224,7 +224,7 @@ jobs:
       - name: Create runtime archives
         shell: pwsh
         run: |
-          foreach ($name in 'hlmedia-windows-shared-x64', 'hlmedia-windows-game-static-x64') {
+          foreach ($name in 'hlmedia-windows', 'hlmedia-windows-game') {
             Compress-Archive -Path "artifacts/$name" -DestinationPath "$name.zip" -CompressionLevel Optimal
           }
           tar -czf hlmedia-linux.tar.gz -C artifacts/hlmedia-linux .
@@ -236,13 +236,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $packageNotes = @"
+          ## Packages
+
+          - ``hlmedia-windows.zip`` — Standard Windows x64 build with shared FFmpeg DLLs and broad codec/container support.
+          - ``hlmedia-windows-game.zip`` — Compact Windows x64 game build with statically linked FFmpeg for local MP4/MOV playback with H.264 video and AAC audio. It requires no FFmpeg DLLs.
+          - ``hlmedia-linux.tar.gz`` — Linux x64 build with shared FFmpeg libraries for Linux deployments.
+
+          Use only one Windows package in an application.
+          "@
           $assets = @(
-            'hlmedia-windows-shared-x64.zip',
-            'hlmedia-windows-game-static-x64.zip',
+            'hlmedia-windows.zip',
+            'hlmedia-windows-game.zip',
             'hlmedia-linux.tar.gz'
           )
           gh release view "$env:GITHUB_REF_NAME" *> $null
-          if ($LASTEXITCODE) { gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --generate-notes }
+          if ($LASTEXITCODE) { gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --notes $packageNotes --generate-notes }
           gh release upload "$env:GITHUB_REF_NAME" @assets --clobber
 
       - name: Update nightly release
@@ -252,9 +261,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = 'nightly'
+          $releaseNotes = @"
+          Automated build from the latest commit on ``main``.
+
+          ## Packages
+
+          - ``hlmedia-windows.zip`` — Standard Windows x64 build with shared FFmpeg DLLs and broad codec/container support.
+          - ``hlmedia-windows-game.zip`` — Compact Windows x64 game build with statically linked FFmpeg for local MP4/MOV playback with H.264 video and AAC audio. It requires no FFmpeg DLLs.
+          - ``hlmedia-linux.tar.gz`` — Linux x64 build with shared FFmpeg libraries for Linux deployments.
+
+          Use only one Windows package in an application.
+          "@
           $assets = @(
-            'hlmedia-windows-shared-x64.zip',
-            'hlmedia-windows-game-static-x64.zip',
+            'hlmedia-windows.zip',
+            'hlmedia-windows-game.zip',
             'hlmedia-linux.tar.gz'
           )
 
@@ -267,7 +287,7 @@ jobs:
               --target $env:GITHUB_SHA `
               --prerelease `
               --title 'Nightly Release' `
-              --notes 'Automated build from main.'
+              --notes $releaseNotes
 
             if ($LASTEXITCODE -ne 0) {
               throw 'Failed to create the nightly release.'
@@ -281,6 +301,14 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) {
             throw 'Failed to move the nightly tag.'
+          }
+
+          gh release edit $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --notes $releaseNotes
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to update the nightly release description.'
           }
 
           gh release upload $tag @assets `
