@@ -1,4 +1,4 @@
-package;
+package hlmedia.audio;
 
 #if hlopenal
 import haxe.io.Bytes;
@@ -7,11 +7,11 @@ import openal.AL;
 import openal.ALC;
 
 /**
-	Audio sink backed by OpenAL.
+	Audio sink backed by OpenAL. Sets by default as Sink if define hlopenal active.
 **/
 class OpenALSink implements AudioSink {
-	static inline var BUFFER_COUNT = 4;
-	static inline var MAX_QUEUED_FRAMES = 24000;
+	static inline final BUFFER_COUNT = 4;
+	static inline final MAX_QUEUED_FRAMES = 24000;
 
 	var device:openal.Device;
 	var context:openal.Context;

@@ -37,16 +37,6 @@
 				"HLMEDIA_DISTRIBUTION": "SHARED",
 				"HLMEDIA_FFMPEG_LINKAGE": "SHARED"
 			}
-		},
-		{
-			"name": "linux-game-static",
-			"generator": "Ninja",
-			"binaryDir": "${sourceDir}/out/build/linux-game-static",
-			"cacheVariables": {
-				"CMAKE_BUILD_TYPE": "Release",
-				"HLMEDIA_DISTRIBUTION": "GAME",
-				"HLMEDIA_FFMPEG_LINKAGE": "STATIC"
-			}
 		}
 	],
 	"buildPresets": [
@@ -63,10 +53,6 @@
 		{
 			"name": "linux-shared",
 			"configurePreset": "linux-shared"
-		},
-		{
-			"name": "linux-game-static",
-			"configurePreset": "linux-game-static"
 		}
 	]
 }

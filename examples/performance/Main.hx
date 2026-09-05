@@ -89,7 +89,6 @@ class Main extends App {
 		video?.dispose();
 
 		video = new VideoPlayer({
-			audioSink: new OpenALSink(),
 			loop: true,
 			videoDecodeMode: mode,
 			allowHardwareFallback: true,

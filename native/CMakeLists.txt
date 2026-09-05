@@ -54,9 +54,9 @@ target_link_libraries(extension PRIVATE
 	HashLink::HashLink
 	FFmpeg::avformat
 	FFmpeg::avcodec
+	FFmpeg::avutil
 	FFmpeg::swresample
 	FFmpeg::swscale
-	FFmpeg::avutil
 )
 
 if(WIN32)

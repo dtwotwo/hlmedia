@@ -24,9 +24,8 @@ and behavior changes.
 
 ## Basic setup
 
-The core library does not choose an audio backend. Without an explicit sink,
-`VideoPlayer` uses `NullAudioSink`, so video plays silently. Pass your own
-`hlmedia.audio.AudioSink` implementation to route decoded audio to OpenAL,
+`VideoPlayer` uses `OpenALSink` as Default sink, else will be used `NullAudioSink` - video plays silently. Pass your own
+`hlmedia.audio.AudioSink` implementation to route decoded audio to
 miniaudio, or another backend.
 
 The OpenAL example uses this setup:

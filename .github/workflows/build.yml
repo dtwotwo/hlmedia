@@ -12,20 +12,8 @@ permissions:
 
 jobs:
   linux:
-    name: Build and test Linux ${{ matrix.variant }}
+    name: Build and test Linux
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: shared
-            preset: linux-shared
-            distribution: SHARED
-            package: hlmedia-linux-full-shared
-          - variant: game-static
-            preset: linux-game-static
-            distribution: GAME
-            package: hlmedia-linux-game-static
     steps:
       - name: Checkout hlmedia
         uses: actions/checkout@v7
@@ -35,7 +23,7 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential ninja-build pkg-config jq libpng-dev libturbojpeg0-dev libvorbis-dev libva-dev libdrm-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev
+          sudo apt-get install --yes build-essential ninja-build pkg-config jq libpng-dev libturbojpeg0-dev libvorbis-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev
 
       - name: Download HashLink
         run: bash ./scripts/ci/download-hashlink.sh
@@ -52,64 +40,14 @@ jobs:
             fi
           done
 
-      - name: Read pinned FFmpeg revision
-        if: matrix.variant == 'game-static'
-        id: ffmpeg
-        run: echo "commit=$(cut -d ' ' -f 1 deps/ffmpeg/VERSION)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore static FFmpeg SDK
-        if: matrix.variant == 'game-static'
-        id: ffmpeg-cache
-        uses: actions/cache@v5
-        with:
-          path: out/deps/ffmpeg-game-static-linux
-          key: ${{ runner.os }}-x64-ffmpeg-${{ steps.ffmpeg.outputs.commit }}-${{ hashFiles('deps/ffmpeg/build-game-static-linux.sh', 'deps/ffmpeg/patches/**') }}
-
-      - name: Validate cached static FFmpeg SDK
-        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit == 'true'
-        run: |
-          actual=$(<out/deps/ffmpeg-game-static-linux/build-info/FFMPEG-COMMIT.txt)
-          test "$actual" = '${{ steps.ffmpeg.outputs.commit }}'
-
-      - name: Checkout pinned FFmpeg source
-        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        run: |
-          git init out/deps/ffmpeg-source
-          git -C out/deps/ffmpeg-source remote add origin https://github.com/FFmpeg/FFmpeg.git
-          git -C out/deps/ffmpeg-source fetch --depth 1 origin ${{ steps.ffmpeg.outputs.commit }}
-          git -C out/deps/ffmpeg-source checkout --detach FETCH_HEAD
-
-      - name: Build static FFmpeg SDK
-        if: matrix.variant == 'game-static' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        env:
-          FFMPEG_SOURCE: ${{ github.workspace }}/out/deps/ffmpeg-source
-          FFMPEG_BUILD_DIR: ${{ github.workspace }}/out/deps/ffmpeg-game-build-linux
-          FFMPEG_INSTALL_DIR: ${{ github.workspace }}/out/deps/ffmpeg-game-static-linux
-        run: bash ./deps/ffmpeg/build-game-static-linux.sh
-
       - name: Configure CMake
-        run: |
-          if [[ '${{ matrix.variant }}' == 'game-static' ]]; then
-            cmake --preset ${{ matrix.preset }} -DFFMPEG_ROOT="$GITHUB_WORKSPACE/out/deps/ffmpeg-game-static-linux"
-          else
-            cmake --preset ${{ matrix.preset }}
-          fi
+        run: cmake --preset linux-shared
 
       - name: Build hlmedia
-        run: cmake --build --preset ${{ matrix.preset }}
+        run: cmake --build --preset linux-shared
 
       - name: Verify output
-        run: test -f out/build/${{ matrix.preset }}/native/hlmedia.hdll
-
-      - name: Verify static FFmpeg linkage
-        if: matrix.variant == 'game-static'
-        run: |
-          dependencies=$(ldd out/build/${{ matrix.preset }}/native/hlmedia.hdll)
-          echo "$dependencies"
-          if grep -Eq 'lib(avcodec|avformat|avutil|swresample|swscale)\.so' <<< "$dependencies"; then
-            echo "Linux GAME build dynamically links FFmpeg." >&2
-            exit 1
-          fi
+        run: test -f out/build/linux-shared/native/hlmedia.hdll
 
       - name: Set up Haxe
         uses: krdlab/setup-haxe@master
@@ -121,28 +59,23 @@ jobs:
 
       - name: Run Haxe/native tests
         env:
-          HLMEDIA_EXPECTED_DISTRIBUTION: ${{ matrix.distribution }}
+          HLMEDIA_EXPECTED_DISTRIBUTION: SHARED
         run: |
-          cp out/build/${{ matrix.preset }}/native/hlmedia.hdll tests/testMain/
+          cp out/build/linux-shared/native/hlmedia.hdll tests/testMain/
           cd tests/testMain
           haxe test-hl.hxml
           PATH="$HASHLINK:$PATH" LD_LIBRARY_PATH="$PWD:$HASHLINK:${LD_LIBRARY_PATH:-}" hl test.hl
 
       - name: Stage Linux package
         run: |
-          cmake --install out/build/${{ matrix.preset }} --prefix dist/${{ matrix.package }}
-          cp LICENSE LICENSE_FFMPEG.md dist/${{ matrix.package }}/
-
-      - name: Add Linux GAME package metadata
-        if: matrix.variant == 'game-static'
-        run: |
-          cp out/deps/ffmpeg-game-static-linux/build-info/{FFMPEG-COMMIT.txt,FFMPEG-CONFIGURE.txt,COPYING.LGPLv2.1,LICENSE.md} dist/${{ matrix.package }}/
+          cmake --install out/build/linux-shared --prefix dist/hlmedia-linux
+          cp LICENSE LICENSE_FFMPEG.md dist/hlmedia-linux/
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.package }}
-          path: dist/${{ matrix.package }}
+          name: hlmedia-linux
+          path: dist/hlmedia-linux
 
   build:
     name: Build and test ${{ matrix.variant }}
@@ -294,10 +227,8 @@ jobs:
           foreach ($name in 'hlmedia-windows-shared-x64', 'hlmedia-windows-game-static-x64') {
             Compress-Archive -Path "artifacts/$name" -DestinationPath "$name.zip" -CompressionLevel Optimal
           }
-          foreach ($name in 'hlmedia-linux-full-shared', 'hlmedia-linux-game-static') {
-            tar -czf "$name.tar.gz" -C "artifacts/$name" .
-            if ($LASTEXITCODE) { throw "Failed to create $name.tar.gz." }
-          }
+          tar -czf hlmedia-linux.tar.gz -C artifacts/hlmedia-linux .
+          if ($LASTEXITCODE) { throw 'Failed to create hlmedia-linux.tar.gz.' }
 
       - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -308,8 +239,7 @@ jobs:
           $assets = @(
             'hlmedia-windows-shared-x64.zip',
             'hlmedia-windows-game-static-x64.zip',
-            'hlmedia-linux-full-shared.tar.gz',
-            'hlmedia-linux-game-static.tar.gz'
+            'hlmedia-linux.tar.gz'
           )
           gh release view "$env:GITHUB_REF_NAME" *> $null
           if ($LASTEXITCODE) { gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --generate-notes }
@@ -325,8 +255,7 @@ jobs:
           $assets = @(
             'hlmedia-windows-shared-x64.zip',
             'hlmedia-windows-game-static-x64.zip',
-            'hlmedia-linux-full-shared.tar.gz',
-            'hlmedia-linux-game-static.tar.gz'
+            'hlmedia-linux.tar.gz'
           )
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null

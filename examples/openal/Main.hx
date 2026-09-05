@@ -10,7 +10,7 @@ class Main extends App {
 	var bitmap:VideoBitmap;
 
 	override function init():Void {
-		video = new VideoPlayer({loop: true, audioSink: new OpenALSink()});
+		video = new VideoPlayer({loop: true});
 		video.open("../res/video/video.mp4");
 		video.play();
 

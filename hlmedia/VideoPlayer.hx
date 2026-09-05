@@ -134,7 +134,7 @@ class VideoPlayer {
 		loop = this.options.loop;
 		if (this.options.volume != null)
 			volume = this.options.volume;
-		audioSink = this.options.audioSink ?? new NullAudioSink();
+		audioSink = this.options.audioSink ?? #if hlopenal new OpenALSink() #else new NullAudioSink() #end;
 		audioSink.setVolume(volume);
 		videoTexture = new VideoTexture();
 	}
