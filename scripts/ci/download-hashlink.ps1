@@ -2,7 +2,15 @@
 param([string]$OutputDirectory = "out/deps/hashlink")
 
 $ErrorActionPreference = "Stop"
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/HaxeFoundation/hashlink/releases/latest"
+$headers = @{
+	Accept = "application/vnd.github+json"
+}
+
+if ($env:GITHUB_TOKEN) {
+	$headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+}
+
+$release = Invoke-RestMethod -Uri "https://api.github.com/repos/HaxeFoundation/hashlink/releases/latest" -Headers $headers
 $asset = $release.assets | Where-Object name -Like "hashlink-*-win.zip" | Select-Object -First 1
 if (-not $asset) {
 	throw "Could not find a Windows HashLink release asset."

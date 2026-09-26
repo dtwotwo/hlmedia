@@ -26,6 +26,8 @@ jobs:
           sudo apt-get install --yes build-essential ninja-build pkg-config jq libpng-dev libturbojpeg0-dev libvorbis-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev
 
       - name: Download HashLink
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash ./scripts/ci/download-hashlink.sh
 
       - name: Verify HashLink test modules
@@ -104,6 +106,8 @@ jobs:
 
       - name: Download HashLink
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/ci/download-hashlink.ps1
 
       - name: Download FFmpeg LGPL shared SDK
@@ -133,7 +137,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: out/deps/ffmpeg-game-static
-          key: ${{ runner.os }}-x64-vs2026-ffmpeg-${{ steps.ffmpeg.outputs.commit }}-${{ hashFiles('deps/ffmpeg/build-game-static.sh', 'deps/ffmpeg/patches/**') }}
+          key: ${{ runner.os }}-x64-vs2026-ffmpeg-${{ steps.ffmpeg.outputs.commit }}-${{ hashFiles('deps/ffmpeg/build-game-static.sh') }}
 
       - name: Validate cached static FFmpeg SDK
         if: matrix.variant == 'game' && steps.ffmpeg-cache.outputs.cache-hit == 'true'

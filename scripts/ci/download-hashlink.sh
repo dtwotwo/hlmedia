@@ -16,10 +16,24 @@ case "$(uname -m)" in
 		;;
 esac
 
-asset_url=$(curl --fail --silent --show-error --location \
-	https://api.github.com/repos/HaxeFoundation/hashlink/releases/tags/latest \
+curl_args=(
+	--fail
+	--silent
+	--show-error
+	--location
+	-H "Accept: application/vnd.github+json"
+)
+
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+	curl_args+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+fi
+
+asset_url=$(
+	curl "${curl_args[@]}" \
+		https://api.github.com/repos/HaxeFoundation/hashlink/releases/tags/latest \
 	| jq --raw-output --arg architecture "$architecture" \
-		'first(.assets[] | select(.name | endswith("linux-" + $architecture + ".tar.gz")) | .browser_download_url) // empty')
+		'first(.assets[] | select(.name | endswith("linux-" + $architecture + ".tar.gz")) | .browser_download_url) // empty'
+)
 
 if [[ -z "$asset_url" ]]; then
 	echo "Could not find a Linux HashLink nightly release asset for $architecture." >&2
