@@ -8,7 +8,6 @@ import hlmedia.types.VideoColorSpace;
 **/
 class VideoShader extends hxsl.Shader {
 	static var SRC = {
-		@param var rgbaTexture:Sampler2D;
 		@param var yTexture:Sampler2D;
 		@param var uTexture:Sampler2D;
 		@param var vTexture:Sampler2D;
@@ -20,9 +19,7 @@ class VideoShader extends hxsl.Shader {
 		var calculatedUV:Vec2;
 		var pixelColor:Vec4;
 		function fragment() {
-			if (useRGBA) {
-				pixelColor = rgbaTexture.get(calculatedUV);
-			} else {
+			if (!useRGBA) {
 				var y = yTexture.get(calculatedUV).r;
 				var u = 0.0;
 				var v = 0.0;
@@ -49,7 +46,7 @@ class VideoShader extends hxsl.Shader {
 					g = yy - 0.3441 * u - 0.7141 * v;
 					b = yy + 1.7720 * u;
 				}
-				pixelColor = vec4(r, g, b, 1.0);
+				pixelColor *= vec4(r, g, b, 1.0);
 			}
 		}
 	}

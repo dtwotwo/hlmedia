@@ -70,7 +70,6 @@ class VideoTexture {
 		uvTexture = filledTexture(1, 1, RG8, 128);
 		shader.useRGBA = true;
 		shader.useNV12 = false;
-		shader.rgbaTexture = output;
 		shader.yTexture = yTexture;
 		shader.uTexture = uTexture;
 		shader.vTexture = vTexture;
@@ -104,7 +103,6 @@ class VideoTexture {
 			case RGBA:
 				uploadPlane(output, frame.y, frame.width, frame.height, frame.yStride, RGBA, 0);
 				shader.useRGBA = true;
-				shader.rgbaTexture = output;
 			case P010:
 				throw TextureUploadFailed("P010 video frames are not supported yet");
 		}
@@ -150,7 +148,6 @@ class VideoTexture {
 			case P010:
 				throw TextureUploadFailed("P010 video frames are not supported yet");
 		}
-		shader.rgbaTexture = output;
 		shader.yTexture = yTexture;
 		shader.uTexture = uTexture;
 		shader.vTexture = vTexture;
